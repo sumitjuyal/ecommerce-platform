@@ -15,6 +15,7 @@
 --                    product_attributes, product_type_addon_links,
 --                    product_addon_links (overrides only),
 --                    store_product_exclusions
+--   pricing_svc    → price_books, price_book_entries
 --
 -- Planned services (separate schemas, same pool DB):
 --   pricing_svc    → price_books, price_book_entries                   (future)
@@ -316,8 +317,7 @@ CREATE TABLE catalog_svc.products (
                         CHECK (uom IN ('EACH','JOB','LITER','QUART','HOUR')),
     status          varchar(20)     NOT NULL DEFAULT 'ACTIVE'
                         CHECK (status IN ('DRAFT','ACTIVE','DISCONTINUED')),
-    -- LABOR and FEE articles have no variants — price is on the product directly
-    base_price      numeric(12,4),
+    -- All pricing lives in pricing_svc.price_book_entries — no base_price here
     attributes      jsonb           NOT NULL DEFAULT '{}',  -- flexible key/value bag
     image_url       varchar(500),
     created_at      timestamptz     NOT NULL DEFAULT now(),
@@ -468,6 +468,68 @@ CREATE INDEX exclusions_product_id_idx  ON catalog_svc.store_product_exclusions 
 
 
 -- =============================================================================
+-- SCHEMA: pricing_svc
+-- =============================================================================
+CREATE SCHEMA IF NOT EXISTS pricing_svc;
+
+-- ── Price Books ───────────────────────────────────────────────────────────────
+-- Two types:
+--   TENANT — one per tenant, full price list, every active variant must have a row
+--   STORE  — one per store group (optional), sparse — only override prices
+--
+-- Fallback at checkout:
+--   1. Look up store pricebook (stores.price_book_id) for the variant
+--   2. If no row or store has no pricebook → fall back to tenant pricebook
+--
+-- Date range on the book — activate next season's prices by creating a new book.
+-- stores.price_book_id NULL = no overrides, always use tenant book.
+CREATE TABLE pricing_svc.price_books (
+    id              uuid            PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id       uuid            NOT NULL,           -- → tenant_svc.tenants.id (logical)
+    code            varchar(100)    NOT NULL,           -- e.g. SPD-FR-2026, SPD-PARIS8-2026
+    name            varchar(255)    NOT NULL,
+    book_type       varchar(10)     NOT NULL
+                        CHECK (book_type IN ('TENANT','STORE')),
+    currency_code   char(3)         NOT NULL,           -- mirrors tenants.currency_code
+    valid_from      timestamptz     NOT NULL,
+    valid_until     timestamptz,                        -- NULL = open-ended
+    status          varchar(20)     NOT NULL DEFAULT 'ACTIVE'
+                        CHECK (status IN ('ACTIVE','ARCHIVED')),
+    created_at      timestamptz     NOT NULL DEFAULT now(),
+    updated_at      timestamptz     NOT NULL DEFAULT now(),
+    CONSTRAINT price_books_date_chk CHECK (valid_until IS NULL OR valid_until > valid_from)
+);
+
+CREATE UNIQUE INDEX price_books_tenant_code_uidx ON pricing_svc.price_books (tenant_id, code);
+CREATE INDEX price_books_tenant_id_idx           ON pricing_svc.price_books (tenant_id);
+CREATE INDEX price_books_book_type_idx           ON pricing_svc.price_books (book_type);
+CREATE INDEX price_books_valid_from_idx          ON pricing_svc.price_books (valid_from);
+
+
+-- ── Price Book Entries ────────────────────────────────────────────────────────
+-- One row per (price_book, variant). All product types use this — TIRE, PART,
+-- LABOR, FEE, BUNDLE. Every article has at least one variant (single-variant
+-- articles follow the same pattern as single-SKU tyres).
+--
+-- Store pricebook: only rows where store price differs from tenant price.
+-- Tenant pricebook: must have a row for every active variant.
+CREATE TABLE pricing_svc.price_book_entries (
+    id              uuid            PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id       uuid            NOT NULL,           -- denormalised for pool queries
+    price_book_id   uuid            NOT NULL,           -- → pricing_svc.price_books.id (logical within schema)
+    variant_id      uuid            NOT NULL,           -- → catalog_svc.product_variants.id (logical)
+    price           numeric(12,4)   NOT NULL CHECK (price >= 0),
+    created_at      timestamptz     NOT NULL DEFAULT now(),
+    updated_at      timestamptz     NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX price_book_entries_book_variant_uidx ON pricing_svc.price_book_entries (price_book_id, variant_id);
+CREATE INDEX price_book_entries_tenant_id_idx            ON pricing_svc.price_book_entries (tenant_id);
+CREATE INDEX price_book_entries_price_book_id_idx        ON pricing_svc.price_book_entries (price_book_id);
+CREATE INDEX price_book_entries_variant_id_idx           ON pricing_svc.price_book_entries (variant_id);
+
+
+-- =============================================================================
 -- SEED DATA — Tenant: Speedy France
 -- =============================================================================
 
@@ -566,27 +628,38 @@ INSERT INTO catalog_svc.product_variants (id, tenant_id, product_id, sku, name, 
 -- ── Add-on products: labor and fees inherited by all TIRE products ────────────
 
 -- LABOR: Tyre Installation Package (EACH — charged per tyre fitted)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, uom, status, base_price) VALUES
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, uom, status) VALUES
     ('f1000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'SVC-TYRE-INSTALL', 'Tyre Installation Package', 'LABOR', 'EACH', 'ACTIVE', 45.00);
+     'e1000000-0000-0000-0000-000000000003', 'SVC-TYRE-INSTALL', 'Tyre Installation Package', 'LABOR', 'EACH', 'ACTIVE');
 
 -- FEE: Scrap tyre recycling (EACH — one fee per tyre, regulatory, separate invoice line by law)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, uom, status, base_price, attributes) VALUES
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, uom, status, attributes) VALUES
     ('f1000000-0000-0000-0000-000000000004', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'FEE-TYRE-RECYCLING', 'Tyre Recycling Fee', 'FEE', 'EACH', 'ACTIVE', 4.25,
+     'e1000000-0000-0000-0000-000000000003', 'FEE-TYRE-RECYCLING', 'Tyre Recycling Fee', 'FEE', 'EACH', 'ACTIVE',
      '{"fee_type":"regulatory"}');
 
 -- FEE: State environmental fee (EACH — one fee per tyre, regulatory, separate invoice line by law)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, uom, status, base_price, attributes) VALUES
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, uom, status, attributes) VALUES
     ('f1000000-0000-0000-0000-000000000005', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'FEE-ENV-STATE', 'State Environmental Fee', 'FEE', 'EACH', 'ACTIVE', 1.00,
+     'e1000000-0000-0000-0000-000000000003', 'FEE-ENV-STATE', 'State Environmental Fee', 'FEE', 'EACH', 'ACTIVE',
      '{"fee_type":"regulatory"}');
 
 -- LABOR: Tyre Protection Warranty (EACH — one warranty per tyre, optional upsell)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, uom, status, base_price, attributes) VALUES
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, uom, status, attributes) VALUES
     ('f1000000-0000-0000-0000-000000000006', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'SVC-WARRANTY-TYRE', 'Tyre Protection Warranty (1 year)', 'LABOR', 'EACH', 'ACTIVE', 9.99,
+     'e1000000-0000-0000-0000-000000000003', 'SVC-WARRANTY-TYRE', 'Tyre Protection Warranty (1 year)', 'LABOR', 'EACH', 'ACTIVE',
      '{"duration_months":"12","coverage":"puncture,damage"}');
+
+-- Single variants for LABOR and FEE articles (all articles must have at least one variant)
+INSERT INTO catalog_svc.product_variants (id, tenant_id, product_id, sku, name, attributes, sort_order) VALUES
+    ('f2000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003',
+     'SVC-TYRE-INSTALL-STD', 'Standard', '{}', 1),
+    ('f2000000-0000-0000-0000-000000000004', 'a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000004',
+     'FEE-TYRE-RECYCLING-STD', 'Standard', '{}', 1),
+    ('f2000000-0000-0000-0000-000000000005', 'a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000005',
+     'FEE-ENV-STATE-STD', 'Standard', '{}', 1),
+    ('f2000000-0000-0000-0000-000000000006', 'a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000006',
+     'SVC-WARRANTY-TYRE-1YR', '1 Year', '{}', 1);
 
 -- ── Product type add-on links — TIRE type ─────────────────────────────────────
 -- Defined once → inherited by every product with product_type='TIRE'
@@ -601,9 +674,46 @@ INSERT INTO catalog_svc.product_type_addon_links (tenant_id, product_type, addon
     ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000005', true,  false, 'PER_UNIT', 3),  -- env fee × tyre qty
     ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000006', false, false, 'PER_UNIT', 4);  -- warranty × tyre qty (optional)
 
--- No product_addon_links rows needed for Michelin PS4 — it inherits all from TIRE type.
+-- No product_addon_links rows needed for Bridgestone T005 — it inherits all from TIRE type.
 
 -- Exclusion example: Lyon store does not offer tyre installation (no trained staff yet)
 INSERT INTO catalog_svc.store_product_exclusions (tenant_id, store_id, product_id, variant_id, reason) VALUES
     ('a1000000-0000-0000-0000-000000000001', 'd1000000-0000-0000-0000-000000000003',
      'f1000000-0000-0000-0000-000000000003', NULL, 'Service not yet available at this location');
+
+-- ── Pricing seed ──────────────────────────────────────────────────────────────
+
+-- Tenant pricebook — full price list, all variants
+INSERT INTO pricing_svc.price_books (id, tenant_id, code, name, book_type, currency_code, valid_from, valid_until, status) VALUES
+    ('c1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001',
+     'SPD-FR-2026', 'Speedy France 2026', 'TENANT', 'EUR', '2026-01-01 00:00:00+00', '2026-12-31 23:59:59+00', 'ACTIVE');
+
+-- Store pricebook — Paris 8th override only (sparse)
+INSERT INTO pricing_svc.price_books (id, tenant_id, code, name, book_type, currency_code, valid_from, valid_until, status) VALUES
+    ('c1000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001',
+     'SPD-PARIS8-2026', 'Speedy Paris 8th District 2026', 'STORE', 'EUR', '2026-01-01 00:00:00+00', '2026-12-31 23:59:59+00', 'ACTIVE');
+
+-- Wire Paris 8th store to its override pricebook
+-- Paris 1st and Lyon have no overrides — stores.price_book_id remains NULL → falls back to tenant pricebook
+UPDATE tenant_svc.stores
+SET price_book_id = 'c1000000-0000-0000-0000-000000000002'
+WHERE id = 'd1000000-0000-0000-0000-000000000002';
+
+-- Tenant pricebook entries — every active variant priced
+INSERT INTO pricing_svc.price_book_entries (tenant_id, price_book_id, variant_id, price) VALUES
+    -- Bridgestone Turanza T005 tyre variants
+    ('a1000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 'f2000000-0000-0000-0000-000000000001', 205.99),  -- 205/55 R16 91V
+    ('a1000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 'f2000000-0000-0000-0000-000000000002', 219.99),  -- 225/45 R17 94Y
+    -- Tyre Installation Package
+    ('a1000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 'f2000000-0000-0000-0000-000000000003',  45.00),
+    -- Tyre Recycling Fee
+    ('a1000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 'f2000000-0000-0000-0000-000000000004',   4.25),
+    -- State Environmental Fee
+    ('a1000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 'f2000000-0000-0000-0000-000000000005',   1.00),
+    -- Tyre Protection Warranty
+    ('a1000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 'f2000000-0000-0000-0000-000000000006',   9.99);
+
+-- Store pricebook entries — Paris 8th overrides only
+-- Premium location charges more for installation; tyre prices are the same as tenant
+INSERT INTO pricing_svc.price_book_entries (tenant_id, price_book_id, variant_id, price) VALUES
+    ('a1000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000002', 'f2000000-0000-0000-0000-000000000003', 55.00);  -- installation override: €55 vs tenant €45

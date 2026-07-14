@@ -44,14 +44,15 @@ A physical accessory or replacement part article (e.g. SKU `PART-TPMS-VALVE`, TP
 ### LABOR
 A labour or service article — has its own SKU and is invoiced as a line item.
 - **UOM: EACH** (per unit — e.g. tyre installation, warranty) or **JOB** (flat once — e.g. wheel alignment, tyre rotation)
-- **No variants** — the SKU itself is the sellable unit; price on `products.base_price`
+- Has **one variant** (single-option) or multiple variants (e.g. premium vs standard installation) — same pattern as TIRE
+- Price in `pricing_svc.price_book_entries` via variant — no `base_price` on the product
 - When used as an addon, `qty_mode` on the link controls whether qty multiplies with parent (`PER_UNIT`) or is always 1 (`PER_JOB`)
 - Examples: `SVC-TYRE-INSTALL` EACH/PER_UNIT, `SVC-WHEEL-ALIGN` JOB/PER_JOB
 
 ### FEE
 A regulatory charge article — has its own SKU and must appear as a **separate line on the invoice** by law.
 - **UOM: EACH** (per unit) or **JOB** (flat per transaction)
-- **No variants** — price on `products.base_price`
+- Has **one variant** — price in `pricing_svc.price_book_entries` via variant
 - `attributes.fee_type` = `'regulatory'` — drives invoice rendering and tax treatment
 - Customer cannot remove a mandatory FEE from the cart
 - Examples: `FEE-TYRE-RECYCLING` EACH/PER_UNIT (one per tyre scrapped)
@@ -96,10 +97,11 @@ Tyre Protection Warranty (1 year)         SVC-WARRANTY-TYRE      LABOR   × 4   
 |---|---|---|---|
 | Bridgestone Turanza T005 | `products` | `product_type`, `uom` | `TIRE`, `EACH` |
 | 205/55 R16 91V size | `product_variants` | `sku` | `BRID-T005-205-55R16-91V` |
-| Tyre Installation Package | `products` | `product_type`, `uom`, `base_price` | `LABOR`, `EACH`, `45.00` |
-| Tyre Recycling Fee | `products` | `product_type`, `uom`, `attributes` | `FEE`, `EACH`, `fee_type=regulatory` |
-| State Environmental Fee | `products` | `product_type`, `uom`, `attributes` | `FEE`, `EACH`, `fee_type=regulatory` |
-| Tyre Protection Warranty | `products` | `product_type`, `uom`, `base_price` | `LABOR`, `EACH`, `9.99` |
+| Tyre Installation Package | `products` + `product_variants` | `product_type`, `uom`, variant `sku` | `LABOR`, `EACH`, `SVC-TYRE-INSTALL-STD` |
+| Tyre Recycling Fee | `products` + `product_variants` | `product_type`, `uom`, `attributes` | `FEE`, `EACH`, `fee_type=regulatory` |
+| State Environmental Fee | `products` + `product_variants` | `product_type`, `uom`, `attributes` | `FEE`, `EACH`, `fee_type=regulatory` |
+| Tyre Protection Warranty | `products` + `product_variants` | `product_type`, `uom`, variant `sku` | `LABOR`, `EACH`, `SVC-WARRANTY-TYRE-1YR` |
+| Price for each article | `pricing_svc.price_book_entries` | `(price_book_id, variant_id)` | tenant book → store override if exists |
 | Why installation & fees auto-appear | `product_type_addon_links` | `product_type`, `is_mandatory`, `qty_mode` | `TIRE`, `true`, `PER_UNIT` |
 | Why warranty is optional | `product_type_addon_links` | `product_type`, `is_mandatory`, `qty_mode` | `TIRE`, `false`, `PER_UNIT` |
 | Why all addons multiply × 4 (4 tyres) | `product_type_addon_links` | `qty_mode` | `PER_UNIT` — addon qty = parent tyre qty |
@@ -154,8 +156,15 @@ erDiagram
     varchar brand         "article field — same as any other product"
     varchar product_type  "LABOR or FEE"
     varchar uom           "EACH (per tyre) or JOB (flat once)"
-    numeric base_price    "45.00 / 4.25 / … — no variants needed"
     jsonb   attributes    "fee_type=regulatory for FEE articles"
+  }
+
+  ADDON_VARIANT {
+    uuid    id PK
+    uuid    product_id FK "→ ADDON_PRODUCT"
+    varchar sku           "SVC-TYRE-INSTALL-STD / FEE-TYRE-RECYCLING-STD / …"
+    varchar name          "Standard — single-option articles have one row"
+    jsonb   attributes    "{}"
   }
 
   PRODUCT_ADDON_LINKS {
@@ -272,7 +281,6 @@ erDiagram
     varchar     product_type          "TIRE | PART | LABOR | FEE | BUNDLE"
     varchar     uom                   "EACH | JOB | LITER | QUART | HOUR"
     varchar     status                "DRAFT | ACTIVE | DISCONTINUED"
-    numeric     base_price            "LABOR and FEE types — no variants"
     jsonb       attributes            "flexible bag: season, vehicle_type, fee_type, etc."
     varchar     image_url
     timestamptz created_at
