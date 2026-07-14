@@ -6,12 +6,12 @@
 |---|---|
 | One catalog per tenant | `catalogs.tenant_id` unique |
 | Categories form a tree | `categories.parent_id` self-reference — unlimited depth |
-| Products have a type | `product_type` IN (`PRODUCT`, `SERVICE`, `BUNDLE`, `FEE`) |
+| Products have a type | `product_type` IN (`TIRE`, `PART`, `LABOR`, `FEE`, `BUNDLE`) |
 | Sellable items are variants | `product_variants` — one row per size/colour/spec combination |
 | Single-SKU product still has one variant | Keeps pricing and inventory anchored to `variant_id` consistently |
-| SERVICE and FEE have no variants | Price on `products.base_price` — nothing to vary |
-| Category-level add-ons apply to all products in that category | `category_addon_links` — define once, inherited by every product in the category |
-| Product-level add-ons override category defaults | `product_addon_links` — used only for exceptions, most products have no rows here |
+| LABOR and FEE have no variants | Price on `products.base_price` — nothing to vary |
+| Product-type add-ons apply to all products sharing the same type | `product_type_addon_links` — define once for `TIRE`, inherited by every tyre regardless of category |
+| Product-level add-ons override type defaults | `product_addon_links` — used only for exceptions, most products have no rows here |
 | FEE = regulatory charge only | Must appear as separate invoice line by law — recycling tax, env fee |
 | Default = every product available at every store | No row in `store_product_exclusions` means available |
 | Exception-based assortment | `store_product_exclusions` — only the 5% exceptions are stored |
@@ -22,18 +22,24 @@
 
 ## Product Types Explained
 
-### PRODUCT
-A physical item sold by SKU (e.g. Michelin Pilot Sport 4, TPMS Valve Kit).
+### TIRE
+A physical tyre sold by SKU (e.g. Michelin Pilot Sport 4, Bridgestone Turanza).
 - Has one or more **variants** (e.g. 205/55R16, 225/45R17)
 - Price is set at the variant level in `pricing_svc`
-- **Single-SKU product:** still creates one variant row — keeps pricing/inventory logic uniform
-- Can be an add-on to another product (e.g. TPMS Valve Kit is a physical part mandatory with every tyre)
+- **Single-SKU tyre:** still creates one variant row — keeps pricing/inventory logic uniform
+- Automatically inherits add-ons (installation, fees, warranty) via `product_type_addon_links`
 
-### SERVICE
+### PART
+A physical accessory or replacement part (e.g. TPMS Valve Kit, wheel bolt set).
+- Has variants when multiple sizes/specs exist
+- Price at the variant level in `pricing_svc`
+- Can be linked as a mandatory or optional add-on to a TIRE via `product_addon_links`
+
+### LABOR
 A labour or service item — no physical inventory (e.g. tyre installation, protection warranty).
 - **No variants** — nothing to vary
 - Price on `products.base_price`
-- Linked as a mandatory or optional add-on to a PRODUCT via `category_addon_links`
+- Linked as a mandatory or optional add-on via `product_type_addon_links`
 
 ### FEE
 A regulatory charge that must appear as a **separate line on the invoice** — required by law, customer cannot remove.
@@ -41,12 +47,11 @@ A regulatory charge that must appear as a **separate line on the invoice** — r
 - Price on `products.base_price`
 - Examples: Scrap Tyre Recycling Charge, State Environmental Fee
 - `attributes.fee_type` = `'regulatory'` — drives invoice rendering and tax treatment
-- **Operational costs** (shop supplies, valve kits) are NOT FEEs — they are BOM components inside the SERVICE price, invisible to the customer
 
 ### BUNDLE
 A **fixed pre-packaged** offering sold as a single unit with one SKU and one bundle price.
 - Components are defined in `bundle_items` (future table — not yet implemented)
-- Example: "Pack Hiver" = 4 winter tyres + fitting + storage at one fixed price
+- Example: Winter Pack = 4 winter tyres + fitting + storage at one fixed price
 
 > **Bundle vs Add-on Links:**
 > If each component has a separate line on the invoice → use `product_addon_links`.
@@ -71,34 +76,34 @@ Out the door                       €1,081.91
 Optional: Tyre Protection Warranty × 4  €39.96  ← SERVICE opt-in upsell
 ```
 
-**How add-ons are linked (category_addon_links on TYRES category):**
+**How add-ons are linked (product_type_addon_links on type TIRE):**
 
 ```
-TYRES category
+product_type = TIRE
   └── SVC-TYRE-INSTALL    is_mandatory=true   sort=1  (every tyre sold includes install)
   └── FEE-TYRE-RECYCLING  is_mandatory=true   sort=2  (law requires separate line)
   └── FEE-ENV-STATE       is_mandatory=true   sort=3  (law requires separate line)
   └── SVC-WARRANTY-TYRE   is_mandatory=false  sort=4  (optional upsell)
 ```
 
-Applies automatically to Michelin PS4, Toyo PROXES, Bridgestone T005 — every tyre, no duplication.
+Applies automatically to Michelin PS4, Toyo PROXES, Bridgestone T005 — every tyre, regardless of category.
 
 ---
 
-## Add-on Inheritance — Category → Product
+## Add-on Inheritance — Product Type → Product
 
-Add-ons are defined at the **category level** and inherited by every product in that category. Product-level rows are used only for exceptions.
+Add-ons are defined at the **product type level** and inherited by every product sharing that type. Category membership is irrelevant — a tyre added directly to the catalog without any category still inherits its add-ons.
 
 ```
-TYRES (category)  ← category_addon_links defined here once
-  ├── Michelin PS4    → inherits all 8 add-ons automatically
-  ├── Toyo PROXES     → inherits all 8 add-ons automatically
-  ├── Bridgestone T005→ inherits all 8 add-ons automatically
-  └── Run-flat XYZ    → inherits category + product_addon_links override (e.g. no TPMS kit)
+product_type = TIRE  ← product_type_addon_links defined here once
+  ├── Michelin PS4     → inherits all add-ons automatically
+  ├── Toyo PROXES      → inherits all add-ons automatically
+  ├── Bridgestone T005 → inherits all add-ons automatically
+  └── Run-flat XYZ     → inherits type defaults + product_addon_links override (e.g. no installation)
 ```
 
 **Checkout resolution order:**
-1. Load `category_addon_links` for the product's category
+1. Load `product_type_addon_links` for the product's `product_type`
 2. Merge `product_addon_links` for the specific product
 3. Product-level entry wins when the same `addon_id` appears in both
 
@@ -117,19 +122,18 @@ TYRES (category)  ← category_addon_links defined here once
 ```mermaid
 erDiagram
 
-  CATALOGS          ||--o{ CATEGORIES              : "contains"
-  CATEGORIES        ||--o{ CATEGORIES              : "parent-child"
-  CATALOGS          ||--o{ PRODUCTS                : "lists"
-  CATEGORIES        ||--o{ PRODUCTS                : "groups"
-  PRODUCTS          ||--o{ PRODUCT_VARIANTS         : "has variants"
-  PRODUCTS          ||--o{ PRODUCT_ATTRIBUTES       : "described by"
-  PRODUCT_VARIANTS  ||--o{ PRODUCT_ATTRIBUTES       : "described by"
-  CATEGORIES        ||--o{ CATEGORY_ADDON_LINKS     : "default add-ons for category"
-  PRODUCTS          ||--o{ CATEGORY_ADDON_LINKS     : "is default add-on (as addon)"
-  PRODUCTS          ||--o{ PRODUCT_ADDON_LINKS      : "product-level override (as parent)"
-  PRODUCTS          ||--o{ PRODUCT_ADDON_LINKS      : "is override add-on (as addon)"
-  PRODUCTS          ||--o{ STORE_PRODUCT_EXCLUSIONS : "excluded from"
-  PRODUCT_VARIANTS  ||--o{ STORE_PRODUCT_EXCLUSIONS : "variant excluded from"
+  CATALOGS                  ||--o{ CATEGORIES                  : "contains"
+  CATEGORIES                ||--o{ CATEGORIES                  : "parent-child"
+  CATALOGS                  ||--o{ PRODUCTS                    : "lists"
+  CATEGORIES                ||--o{ PRODUCTS                    : "groups (navigation only)"
+  PRODUCTS                  ||--o{ PRODUCT_VARIANTS            : "has variants"
+  PRODUCTS                  ||--o{ PRODUCT_ATTRIBUTES          : "described by"
+  PRODUCT_VARIANTS          ||--o{ PRODUCT_ATTRIBUTES          : "described by"
+  PRODUCT_TYPE_ADDON_LINKS  }o--|| PRODUCTS                    : "addon_id references"
+  PRODUCTS                  ||--o{ PRODUCT_ADDON_LINKS         : "product-level override (as parent)"
+  PRODUCTS                  ||--o{ PRODUCT_ADDON_LINKS         : "is override add-on (as addon)"
+  PRODUCTS                  ||--o{ STORE_PRODUCT_EXCLUSIONS    : "excluded from"
+  PRODUCT_VARIANTS          ||--o{ STORE_PRODUCT_EXCLUSIONS    : "variant excluded from"
 
   CATALOGS {
     uuid        id PK
@@ -161,15 +165,15 @@ erDiagram
     uuid        id PK
     uuid        tenant_id             "denormalised"
     uuid        catalog_id FK
-    uuid        category_id FK
+    uuid        category_id FK        "NULL = no category — addons still work via product_type"
     varchar     sku                   "master SKU"
     varchar     name
     text        description
     varchar     brand
-    varchar     product_type          "PRODUCT | SERVICE | BUNDLE"
+    varchar     product_type          "TIRE | PART | LABOR | FEE | BUNDLE"
     varchar     status                "DRAFT | ACTIVE | DISCONTINUED"
-    numeric     base_price            "SERVICE type only — no variants"
-    jsonb       attributes            "flexible bag: season, vehicle_type, etc."
+    numeric     base_price            "LABOR and FEE types — no variants"
+    jsonb       attributes            "flexible bag: season, vehicle_type, fee_type, etc."
     varchar     image_url
     timestamptz created_at
     timestamptz updated_at
@@ -198,11 +202,11 @@ erDiagram
     timestamptz created_at
   }
 
-  CATEGORY_ADDON_LINKS {
+  PRODUCT_TYPE_ADDON_LINKS {
     uuid        id PK
     uuid        tenant_id             "denormalised"
-    uuid        category_id FK        "e.g. TYRES — covers ALL products in category"
-    uuid        addon_id FK           "SERVICE, PRODUCT (part), or FEE"
+    varchar     product_type          "TIRE | PART | LABOR | FEE | BUNDLE"
+    uuid        addon_id FK           "LABOR or FEE product"
     boolean     is_mandatory          "true = auto-added, cannot be removed"
     boolean     default_selected      "true = pre-ticked for optional add-ons"
     int         sort_order            "UI display order"

@@ -12,8 +12,8 @@
 --   tenant_svc     → tenants, tenant_settings, stores, store_addresses,
 --                    store_hours, store_holiday_hours, tenant_users, tenant_user_roles
 --   catalog_svc    → catalogs, categories, products, product_variants,
---                    product_attributes, category_addon_links,
---                    product_addon_links (overrides only), service_bom,
+--                    product_attributes, product_type_addon_links,
+--                    product_addon_links (overrides only),
 --                    store_product_exclusions
 --
 -- Planned services (separate schemas, same pool DB):
@@ -310,8 +310,8 @@ CREATE TABLE catalog_svc.products (
     name            varchar(255)    NOT NULL,
     description     text,
     brand           varchar(100),
-    product_type    varchar(30)     NOT NULL DEFAULT 'PRODUCT'
-                        CHECK (product_type IN ('PRODUCT','SERVICE','BUNDLE','FEE')),
+    product_type    varchar(30)     NOT NULL
+                        CHECK (product_type IN ('TIRE','PART','LABOR','FEE','BUNDLE')),
     status          varchar(20)     NOT NULL DEFAULT 'ACTIVE'
                         CHECK (status IN ('DRAFT','ACTIVE','DISCONTINUED')),
     -- SERVICE type products have no variants — price is on the product directly
@@ -374,42 +374,44 @@ CREATE INDEX prod_attrs_tenant_id_idx   ON catalog_svc.product_attributes (tenan
 CREATE INDEX prod_attrs_key_value_idx   ON catalog_svc.product_attributes (key, value);
 
 
--- ── Category Add-on Links ────────────────────────────────────────────────────
--- Defines default add-ons for ALL products in a category.
--- Every tyre in TYRES_SUMMER inherits these without any product-level rows.
--- Eliminates duplication: one definition covers hundreds of products.
+-- ── Product Type Add-on Links ─────────────────────────────────────────────────
+-- Defines default add-ons for ALL products sharing the same product_type.
+-- e.g. product_type='TIRE' → every tyre automatically gets installation, fees,
+-- and warranty add-ons without any per-product or per-category rows.
+--
+-- This is the primary inheritance mechanism. Categories are for navigation only.
 --
 -- Checkout resolution order (product level wins on conflict):
---   1. Collect category_addon_links for the product's category
+--   1. Collect product_type_addon_links for the product's product_type
 --   2. Merge product_addon_links for the specific product (overrides / additions)
 --   3. Result = final add-on set for that product
-CREATE TABLE catalog_svc.category_addon_links (
+CREATE TABLE catalog_svc.product_type_addon_links (
     id                  uuid            PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id           uuid            NOT NULL,
-    category_id         uuid            NOT NULL REFERENCES catalog_svc.categories (id),
-    addon_id            uuid            NOT NULL REFERENCES catalog_svc.products (id),  -- SERVICE, PRODUCT, or FEE
+    product_type        varchar(30)     NOT NULL
+                            CHECK (product_type IN ('TIRE','PART','LABOR','FEE','BUNDLE')),
+    addon_id            uuid            NOT NULL REFERENCES catalog_svc.products (id),  -- LABOR or FEE
     is_mandatory        boolean         NOT NULL DEFAULT false,
     default_selected    boolean         NOT NULL DEFAULT false,
     sort_order          integer         NOT NULL DEFAULT 0,
     created_at          timestamptz     NOT NULL DEFAULT now(),
-    updated_at          timestamptz     NOT NULL DEFAULT now(),
-    CONSTRAINT category_addon_links_type_chk CHECK (true)  -- addon_id type validated at app layer
+    updated_at          timestamptz     NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX cat_addon_links_category_addon_uidx ON catalog_svc.category_addon_links (category_id, addon_id);
-CREATE INDEX cat_addon_links_category_id_idx            ON catalog_svc.category_addon_links (category_id);
-CREATE INDEX cat_addon_links_tenant_id_idx              ON catalog_svc.category_addon_links (tenant_id);
+CREATE UNIQUE INDEX prod_type_addon_links_type_addon_uidx ON catalog_svc.product_type_addon_links (tenant_id, product_type, addon_id);
+CREATE INDEX prod_type_addon_links_type_idx               ON catalog_svc.product_type_addon_links (tenant_id, product_type);
+CREATE INDEX prod_type_addon_links_tenant_id_idx          ON catalog_svc.product_type_addon_links (tenant_id);
 
 
 -- ── Product Add-on Links (product-level overrides only) ──────────────────────
 -- Use this ONLY when a specific product needs add-ons that differ from its
--- category defaults. Most products will have NO rows here.
+-- product_type defaults. Most products will have NO rows here.
 --
 -- Examples of valid overrides:
---   - A run-flat tyre that does NOT need the standard TPMS kit  (exclude via app logic)
---   - A premium tyre that includes an extended warranty add-on not on other tyres
+--   - A run-flat tyre that does NOT need the standard installation package
+--   - A premium tyre with an extended warranty not offered on other tyres
 --
--- Checkout merges category_addon_links + product_addon_links.
+-- Checkout merges product_type_addon_links + product_addon_links.
 -- Product-level entry wins when the same addon_id appears in both.
 --
 -- is_mandatory = true  → auto-added to cart, customer cannot remove
@@ -542,10 +544,10 @@ INSERT INTO catalog_svc.categories (id, tenant_id, catalog_id, parent_id, code, 
     ('e2000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'TYRES_WINTER',   'Winter Tyres',     2),
     ('e2000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'TYRES_ALLSEASON', 'All-Season Tyres', 3);
 
--- Sample PRODUCT — tyre
+-- TIRE: Michelin Pilot Sport 4 (Summer — passenger)
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, brand, product_type, status, attributes) VALUES
     ('f1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e2000000-0000-0000-0000-000000000001', 'MICH-PS4', 'Michelin Pilot Sport 4', 'MICHELIN', 'PRODUCT', 'ACTIVE',
+     'e2000000-0000-0000-0000-000000000001', 'MICH-PS4', 'Michelin Pilot Sport 4', 'MICHELIN', 'TIRE', 'ACTIVE',
      '{"season":"summer","vehicle_type":"passenger"}');
 
 -- Variants for Michelin PS4
@@ -555,12 +557,12 @@ INSERT INTO catalog_svc.product_variants (id, tenant_id, product_id, sku, name, 
     ('f2000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001',
      'MICH-PS4-225-45R17-94Y', '225/45 R17 94Y', '{"tire_size":"225/45R17","load_index":"94","speed_rating":"Y"}', 2);
 
--- ── Add-on products: services and fees linked to the TYRES category ─────────
+-- ── Add-on products: labor and fees inherited by all TIRE products ────────────
 
--- SERVICE: Tyre Installation Package
+-- LABOR: Tyre Installation Package
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price) VALUES
     ('f1000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'SVC-TYRE-INSTALL', 'Tyre Installation Package', 'SERVICE', 'ACTIVE', 45.00);
+     'e1000000-0000-0000-0000-000000000003', 'SVC-TYRE-INSTALL', 'Tyre Installation Package', 'LABOR', 'ACTIVE', 45.00);
 
 -- FEE: Scrap tyre recycling (regulatory — mandatory, separate invoice line by law)
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
@@ -574,25 +576,26 @@ INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, n
      'e1000000-0000-0000-0000-000000000003', 'FEE-ENV-STATE', 'State Environmental Fee', 'FEE', 'ACTIVE', 1.00,
      '{"fee_type":"regulatory"}');
 
--- SERVICE: Protection warranty (optional upsell)
+-- LABOR: Protection warranty (optional upsell)
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
     ('f1000000-0000-0000-0000-000000000006', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'SVC-WARRANTY-TYRE', 'Tyre Protection Warranty (1 year)', 'SERVICE', 'ACTIVE', 9.99,
+     'e1000000-0000-0000-0000-000000000003', 'SVC-WARRANTY-TYRE', 'Tyre Protection Warranty (1 year)', 'LABOR', 'ACTIVE', 9.99,
      '{"duration_months":"12","coverage":"puncture,damage"}');
 
--- ── Category add-on links — TYRES category ───────────────────────────────────
--- Defined once → inherited by every tyre product (Michelin, Toyo, Bridgestone…)
--- sort 1: Tyre installation package  → mandatory (customer always buys with install)
+-- ── Product type add-on links — TIRE type ─────────────────────────────────────
+-- Defined once → inherited by every product with product_type='TIRE'
+-- Works regardless of category — a TIRE not in any category still inherits these.
+-- sort 1: Tyre installation package  → mandatory (every tyre sold includes install)
 -- sort 2: Recycling fee              → mandatory (regulatory, separate invoice line)
 -- sort 3: Environmental fee          → mandatory (regulatory, separate invoice line)
 -- sort 4: Protection warranty        → optional upsell
-INSERT INTO catalog_svc.category_addon_links (tenant_id, category_id, addon_id, is_mandatory, default_selected, sort_order) VALUES
-    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', true,  false, 1),
-    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000004', true,  false, 2),
-    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000005', true,  false, 3),
-    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000006', false, false, 4);
+INSERT INTO catalog_svc.product_type_addon_links (tenant_id, product_type, addon_id, is_mandatory, default_selected, sort_order) VALUES
+    ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000003', true,  false, 1),
+    ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000004', true,  false, 2),
+    ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000005', true,  false, 3),
+    ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000006', false, false, 4);
 
--- No product_addon_links rows needed for Michelin PS4 — it inherits all from TYRES category.
+-- No product_addon_links rows needed for Michelin PS4 — it inherits all from TIRE type.
 
 -- Exclusion example: Lyon store does not offer tyre installation (no trained staff yet)
 INSERT INTO catalog_svc.store_product_exclusions (tenant_id, store_id, product_id, variant_id, reason) VALUES
