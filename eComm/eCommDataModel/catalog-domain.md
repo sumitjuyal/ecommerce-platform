@@ -10,7 +10,9 @@
 | Sellable items are variants | `product_variants` — one row per size/colour/spec combination |
 | Single-SKU product still has one variant | Keeps pricing and inventory anchored to `variant_id` consistently |
 | SERVICE and FEE have no variants | Price on `products.base_price` — nothing to vary |
-| Products can have mandatory and optional add-ons | `product_addon_links` — add-on can be SERVICE, PRODUCT (part), or FEE |
+| Category-level add-ons apply to all products in that category | `category_addon_links` — define once, inherited by every product in the category |
+| Product-level add-ons override category defaults | `product_addon_links` — used only for exceptions, most products have no rows here |
+| Add-on can be SERVICE, PRODUCT (part), or FEE | Applies to both `category_addon_links` and `product_addon_links` |
 | FEE is a regulatory or operational charge | `fee_type` attribute: `regulatory` (recycling, env) or `operational` (shop supplies) |
 | Default = every product available at every store | No row in `store_product_exclusions` means available |
 | Exception-based assortment | `store_product_exclusions` — only the 5% exceptions are stored |
@@ -86,24 +88,30 @@ Out the door: $1,009.99
 
 ---
 
-## Product-Service Association (mandatory + optional services)
+## Add-on Inheritance — Category → Product
 
-When a PRODUCT requires or offers related SERVICEs, `product_service_links` defines the relationship.
+Add-ons are defined at the **category level** and inherited by every product in that category. Product-level rows are used only for exceptions.
+
+```
+TYRES (category)  ← category_addon_links defined here once
+  ├── Michelin PS4    → inherits all 8 add-ons automatically
+  ├── Toyo PROXES     → inherits all 8 add-ons automatically
+  ├── Bridgestone T005→ inherits all 8 add-ons automatically
+  └── Run-flat XYZ    → inherits category + product_addon_links override (e.g. no TPMS kit)
+```
+
+**Checkout resolution order:**
+1. Load `category_addon_links` for the product's category
+2. Merge `product_addon_links` for the specific product
+3. Product-level entry wins when the same `addon_id` appears in both
+
+**Add-on behaviour:**
 
 | `is_mandatory` | `default_selected` | Behaviour |
 |---|---|---|
-| `true` | `false` | Auto-added to cart, customer cannot remove it |
+| `true` | — | Auto-added to cart, customer cannot remove |
 | `false` | `true` | Pre-ticked in UI, customer can opt out |
-| `false` | `false` | Shown as an upsell, customer must opt in |
-
-**Speedy France example — buying a tyre:**
-```
-Michelin PS4 (PRODUCT)
-  ├── Tyre Fitting — SVC-FITTING         is_mandatory=true   (auto-added, no choice)
-  └── Protection Warranty — SVC-WARRANTY is_mandatory=false  (upsell, opt-in)
-```
-
-Cart total = tyre price + fitting price + (warranty price if selected)
+| `false` | `false` | Shown as upsell, customer must opt in |
 
 ---
 
@@ -119,8 +127,10 @@ erDiagram
   PRODUCTS          ||--o{ PRODUCT_VARIANTS         : "has variants"
   PRODUCTS          ||--o{ PRODUCT_ATTRIBUTES       : "described by"
   PRODUCT_VARIANTS  ||--o{ PRODUCT_ATTRIBUTES       : "described by"
-  PRODUCTS          ||--o{ PRODUCT_ADDON_LINKS      : "has add-ons (as parent)"
-  PRODUCTS          ||--o{ PRODUCT_ADDON_LINKS      : "is add-on for (as addon)"
+  CATEGORIES        ||--o{ CATEGORY_ADDON_LINKS     : "default add-ons for category"
+  PRODUCTS          ||--o{ CATEGORY_ADDON_LINKS     : "is default add-on (as addon)"
+  PRODUCTS          ||--o{ PRODUCT_ADDON_LINKS      : "product-level override (as parent)"
+  PRODUCTS          ||--o{ PRODUCT_ADDON_LINKS      : "is override add-on (as addon)"
   PRODUCTS          ||--o{ STORE_PRODUCT_EXCLUSIONS : "excluded from"
   PRODUCT_VARIANTS  ||--o{ STORE_PRODUCT_EXCLUSIONS : "variant excluded from"
 
@@ -191,14 +201,26 @@ erDiagram
     timestamptz created_at
   }
 
-  PRODUCT_ADDON_LINKS {
+  CATEGORY_ADDON_LINKS {
     uuid        id PK
     uuid        tenant_id             "denormalised"
-    uuid        product_id FK         "the parent PRODUCT being purchased"
+    uuid        category_id FK        "e.g. TYRES — covers ALL products in category"
     uuid        addon_id FK           "SERVICE, PRODUCT (part), or FEE"
     boolean     is_mandatory          "true = auto-added, cannot be removed"
     boolean     default_selected      "true = pre-ticked for optional add-ons"
     int         sort_order            "UI display order"
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  PRODUCT_ADDON_LINKS {
+    uuid        id PK
+    uuid        tenant_id             "denormalised"
+    uuid        product_id FK         "specific product override"
+    uuid        addon_id FK           "SERVICE, PRODUCT (part), or FEE"
+    boolean     is_mandatory          "overrides category-level value"
+    boolean     default_selected
+    int         sort_order
     timestamptz created_at
     timestamptz updated_at
   }
