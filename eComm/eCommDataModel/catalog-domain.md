@@ -6,11 +6,12 @@
 |---|---|
 | One catalog per tenant | `catalogs.tenant_id` unique |
 | Categories form a tree | `categories.parent_id` self-reference — unlimited depth |
-| Products have a type | `product_type` IN (`PRODUCT`, `SERVICE`, `BUNDLE`) |
+| Products have a type | `product_type` IN (`PRODUCT`, `SERVICE`, `BUNDLE`, `FEE`) |
 | Sellable items are variants | `product_variants` — one row per size/colour/spec combination |
 | Single-SKU product still has one variant | Keeps pricing and inventory anchored to `variant_id` consistently |
-| Services have no variants | `product_type = 'SERVICE'` → price on `products.base_price` |
-| Products can have mandatory and optional services | `product_service_links` — e.g. tyre → fitting (mandatory) + warranty (optional) |
+| SERVICE and FEE have no variants | Price on `products.base_price` — nothing to vary |
+| Products can have mandatory and optional add-ons | `product_addon_links` — add-on can be SERVICE, PRODUCT (part), or FEE |
+| FEE is a regulatory or operational charge | `fee_type` attribute: `regulatory` (recycling, env) or `operational` (shop supplies) |
 | Default = every product available at every store | No row in `store_product_exclusions` means available |
 | Exception-based assortment | `store_product_exclusions` — only the 5% exceptions are stored |
 | Exclusion can be product-wide or variant-level | `variant_id NULL` = whole product excluded; set = specific variant only |
@@ -21,25 +22,67 @@
 ## Product Types Explained
 
 ### PRODUCT
-A physical item sold by SKU (e.g. Michelin Pilot Sport 4).
+A physical item sold by SKU (e.g. Michelin Pilot Sport 4, TPMS Valve Kit).
 - Has one or more **variants** (e.g. 205/55R16, 225/45R17)
 - Price is set at the variant level in `pricing_svc`
 - **Single-SKU product:** still creates one variant row — keeps pricing/inventory logic uniform
+- Can be an add-on to another product (e.g. TPMS Valve Kit is a physical part mandatory with every tyre)
 
 ### SERVICE
-A standalone service that can be sold independently or linked to a product.
+A labour or service item — no physical inventory (e.g. tyre fitting, wheel balance, warranty).
 - **No variants** — nothing to vary
-- Price sits directly on `products.base_price` (or can be overridden in `pricing_svc`)
-- Examples: tyre fitting, wheel alignment, nitrogen inflation, protection warranty
+- Price sits on `products.base_price` or can be overridden in `pricing_svc`
+- Can be standalone or linked as a mandatory/optional add-on to a PRODUCT
+
+### FEE
+A regulatory or operational charge automatically applied — not a product, not labour.
+- **No variants, no inventory**
+- Price on `products.base_price`
+- Examples: Scrap Tyre Recycling Charge, State Environmental Fee, Shop Supplies
+- `attributes.fee_type` = `'regulatory'` or `'operational'` — useful for invoice rendering and tax treatment
 
 ### BUNDLE
 A **fixed pre-packaged** offering sold as a single unit with one SKU and one bundle price.
-- The bundle has its own product row and its own price
 - Components are defined in `bundle_items` (future table — not yet implemented)
-- Example: "Pack Hiver" = 4 winter tyres + fitting + tyre storage, sold at a fixed package price
+- Example: "Pack Hiver" = 4 winter tyres + fitting + storage at one fixed price
 
-> **Bundle vs Product-Service Association:**
-> A bundle has ONE price for the whole package. A product-service association prices each component independently. If a customer buys a tyre and the fitting cost shows separately on the invoice → that is a **product-service link**. If the whole pack is one line item → that is a **bundle**.
+> **Bundle vs Add-on Links:**
+> If each component has a separate line on the invoice → use `product_addon_links`.
+> If the whole pack is one line item at one price → use `BUNDLE`.
+
+---
+
+## Real-World Example — Tyre Package (Firestone model)
+
+Based on a real tyre product page, here is how the full package maps to the data model:
+
+```
+Toyo PROXES ST III 235/60R18 XL    → products (PRODUCT) + product_variants (235/60R18)
+                                      qty=4, $205.99 each
+                                      Price via pricing_svc
+
+Installation Fees breakdown:
+  Computerized Wheel Balance        → products (SERVICE)  SVC-WHEEL-BALANCE   $13.99  mandatory
+  TPMS Valve Service Kit            → products (PRODUCT)  PART-TPMS-VALVE-KIT  $7.99  mandatory
+  TPMS Valve Service Kit Labor      → products (SERVICE)  SVC-TPMS-LABOUR      $3.31  mandatory
+  Scrap Tire Recycling Charge       → products (FEE)      FEE-TYRE-RECYCLING   $4.25  mandatory, fee_type=regulatory
+  State Environmental Fee           → products (FEE)      FEE-ENV-STATE        $1.00  mandatory, fee_type=regulatory
+  Shop Supplies                     → products (FEE)      FEE-SHOP-SUPPLIES    $1.73  mandatory, fee_type=operational
+
+Optional upsell:
+  Protection Warranty (1 year)      → products (SERVICE)  SVC-WARRANTY-TYRE    $9.99  optional, not pre-ticked
+```
+
+All linked via `product_addon_links` where `product_id` = the tyre and `addon_id` = each item above.
+
+**Cart total for 4 tyres:**
+```
+Tyres:    4 × $205.99 = $823.96
+Add-ons:  4 × ($13.99 + $7.99 + $3.31 + $4.25 + $1.00 + $1.73) = $129.08
+Taxes:    $56.95
+──────────────────────────────
+Out the door: $1,009.99
+```
 
 ---
 
@@ -76,8 +119,8 @@ erDiagram
   PRODUCTS          ||--o{ PRODUCT_VARIANTS         : "has variants"
   PRODUCTS          ||--o{ PRODUCT_ATTRIBUTES       : "described by"
   PRODUCT_VARIANTS  ||--o{ PRODUCT_ATTRIBUTES       : "described by"
-  PRODUCTS          ||--o{ PRODUCT_SERVICE_LINKS    : "linked services (as product)"
-  PRODUCTS          ||--o{ PRODUCT_SERVICE_LINKS    : "linked to products (as service)"
+  PRODUCTS          ||--o{ PRODUCT_ADDON_LINKS      : "has add-ons (as parent)"
+  PRODUCTS          ||--o{ PRODUCT_ADDON_LINKS      : "is add-on for (as addon)"
   PRODUCTS          ||--o{ STORE_PRODUCT_EXCLUSIONS : "excluded from"
   PRODUCT_VARIANTS  ||--o{ STORE_PRODUCT_EXCLUSIONS : "variant excluded from"
 
@@ -148,13 +191,13 @@ erDiagram
     timestamptz created_at
   }
 
-  PRODUCT_SERVICE_LINKS {
+  PRODUCT_ADDON_LINKS {
     uuid        id PK
     uuid        tenant_id             "denormalised"
-    uuid        product_id FK         "the PRODUCT being purchased"
-    uuid        service_id FK         "the SERVICE being linked (must be SERVICE type)"
+    uuid        product_id FK         "the parent PRODUCT being purchased"
+    uuid        addon_id FK           "SERVICE, PRODUCT (part), or FEE"
     boolean     is_mandatory          "true = auto-added, cannot be removed"
-    boolean     default_selected      "true = pre-ticked for optional services"
+    boolean     default_selected      "true = pre-ticked for optional add-ons"
     int         sort_order            "UI display order"
     timestamptz created_at
     timestamptz updated_at
@@ -229,6 +272,6 @@ SELECT * FROM tree;
 | `GET /catalogs/{tenantId}/products?storeId=` | Apply store exclusions filter |
 | `GET /catalogs/{tenantId}/categories` | Full category tree |
 | `GET /products/{id}/variants` | All variants for a product |
-| `GET /products/{id}/services` | Mandatory + optional services linked to a product |
+| `GET /products/{id}/addons` | All add-ons linked to a product (services, parts, fees) — mandatory and optional |
 | `POST /catalogs/{tenantId}/exclusions` | Exclude a product from a store |
 | `DELETE /catalogs/{tenantId}/exclusions/{id}` | Re-include a previously excluded product |

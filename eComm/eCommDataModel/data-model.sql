@@ -12,7 +12,7 @@
 --   tenant_svc     → tenants, tenant_settings, stores, store_addresses,
 --                    store_hours, store_holiday_hours, tenant_users, tenant_user_roles
 --   catalog_svc    → catalogs, categories, products, product_variants,
---                    product_attributes, product_service_links,
+--                    product_attributes, product_addon_links,
 --                    store_product_exclusions
 --
 -- Planned services (separate schemas, same pool DB):
@@ -310,7 +310,7 @@ CREATE TABLE catalog_svc.products (
     description     text,
     brand           varchar(100),
     product_type    varchar(30)     NOT NULL DEFAULT 'PRODUCT'
-                        CHECK (product_type IN ('PRODUCT','SERVICE','BUNDLE')),
+                        CHECK (product_type IN ('PRODUCT','SERVICE','BUNDLE','FEE')),
     status          varchar(20)     NOT NULL DEFAULT 'ACTIVE'
                         CHECK (status IN ('DRAFT','ACTIVE','DISCONTINUED')),
     -- SERVICE type products have no variants — price is on the product directly
@@ -373,31 +373,40 @@ CREATE INDEX prod_attrs_tenant_id_idx   ON catalog_svc.product_attributes (tenan
 CREATE INDEX prod_attrs_key_value_idx   ON catalog_svc.product_attributes (key, value);
 
 
--- ── Product Service Links ─────────────────────────────────────────────────────
--- Associates a PRODUCT with related SERVICEs.
--- Use case: buying a tyre triggers mandatory fitting + optional warranty.
--- This is NOT a bundle — each component is priced independently.
+-- ── Product Add-on Links ──────────────────────────────────────────────────────
+-- Associates a PRODUCT with any add-on: a SERVICE, a physical PRODUCT (part),
+-- or a FEE. All three can be mandatory or optional.
 --
--- is_mandatory = true  → service is auto-added when the product is added to cart
--- is_mandatory = false → service is presented to the customer as an opt-in upsell
--- default_selected     → pre-ticked in the UI even when optional
--- sort_order           → controls display order in the service selector UI
-CREATE TABLE catalog_svc.product_service_links (
+-- Real example (tyre package):
+--   Toyo PROXES ST III          → PRODUCT  (the tyre itself)
+--   Computerized Wheel Balance  → SERVICE  is_mandatory=true  (labour)
+--   TPMS Valve Service Kit      → PRODUCT  is_mandatory=true  (physical part)
+--   TPMS Valve Service Kit Labor→ SERVICE  is_mandatory=true  (labour for above)
+--   Scrap Tire Recycling Charge → FEE      is_mandatory=true  (regulatory)
+--   State Environmental Fee     → FEE      is_mandatory=true  (regulatory)
+--   Shop Supplies               → FEE      is_mandatory=true  (operational)
+--   Protection Warranty         → SERVICE  is_mandatory=false (optional upsell)
+--
+-- is_mandatory = true  → auto-added to cart, customer cannot remove
+-- is_mandatory = false → presented as opt-in upsell
+-- default_selected     → pre-ticked in UI for optional add-ons
+-- sort_order           → controls display order on product page / cart
+CREATE TABLE catalog_svc.product_addon_links (
     id                  uuid            PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id           uuid            NOT NULL,
-    product_id          uuid            NOT NULL REFERENCES catalog_svc.products (id),   -- the PRODUCT
-    service_id          uuid            NOT NULL REFERENCES catalog_svc.products (id),   -- must be SERVICE type
+    product_id          uuid            NOT NULL REFERENCES catalog_svc.products (id),  -- the parent PRODUCT
+    addon_id            uuid            NOT NULL REFERENCES catalog_svc.products (id),  -- SERVICE, PRODUCT, or FEE
     is_mandatory        boolean         NOT NULL DEFAULT false,
-    default_selected    boolean         NOT NULL DEFAULT false,  -- pre-tick optional services
+    default_selected    boolean         NOT NULL DEFAULT false,
     sort_order          integer         NOT NULL DEFAULT 0,
     created_at          timestamptz     NOT NULL DEFAULT now(),
     updated_at          timestamptz     NOT NULL DEFAULT now(),
-    CONSTRAINT product_service_links_different_chk CHECK (product_id <> service_id)
+    CONSTRAINT product_addon_links_different_chk CHECK (product_id <> addon_id)
 );
 
-CREATE UNIQUE INDEX prod_svc_links_product_service_uidx ON catalog_svc.product_service_links (product_id, service_id);
-CREATE INDEX prod_svc_links_product_id_idx              ON catalog_svc.product_service_links (product_id);
-CREATE INDEX prod_svc_links_tenant_id_idx               ON catalog_svc.product_service_links (tenant_id);
+CREATE UNIQUE INDEX prod_addon_links_product_addon_uidx ON catalog_svc.product_addon_links (product_id, addon_id);
+CREATE INDEX prod_addon_links_product_id_idx            ON catalog_svc.product_addon_links (product_id);
+CREATE INDEX prod_addon_links_tenant_id_idx             ON catalog_svc.product_addon_links (tenant_id);
 
 
 -- ── Store Product Exclusions (exception-based assortment) ─────────────────────
@@ -527,18 +536,66 @@ INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, n
      'e1000000-0000-0000-0000-000000000003', 'SVC-FITTING', 'Montage pneu', 'SERVICE', 'ACTIVE', 12.00,
      '{"duration_minutes":"30"}');
 
--- Protection warranty service (optional add-on)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
+-- ── Add-on products: services, parts, fees ────────────────────────────────────
+
+-- SERVICE: Wheel balance (labour — mandatory with every tyre)
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price) VALUES
     ('f1000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
+     'e1000000-0000-0000-0000-000000000003', 'SVC-WHEEL-BALANCE', 'Équilibrage roue', 'SERVICE', 'ACTIVE', 13.99);
+
+-- PRODUCT: TPMS valve kit (physical part — mandatory with every tyre)
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price) VALUES
+    ('f1000000-0000-0000-0000-000000000004', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
+     'e1000000-0000-0000-0000-000000000002', 'PART-TPMS-VALVE-KIT', 'Kit valve TPMS', 'PRODUCT', 'ACTIVE', 7.99);
+
+-- SERVICE: TPMS valve kit labour (mandatory — goes with the kit above)
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price) VALUES
+    ('f1000000-0000-0000-0000-000000000005', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
+     'e1000000-0000-0000-0000-000000000003', 'SVC-TPMS-LABOUR', 'Pose kit valve TPMS', 'SERVICE', 'ACTIVE', 3.31);
+
+-- FEE: Scrap tyre recycling charge (regulatory — mandatory)
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
+    ('f1000000-0000-0000-0000-000000000006', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
+     'e1000000-0000-0000-0000-000000000003', 'FEE-TYRE-RECYCLING', 'Taxe recyclage pneu', 'FEE', 'ACTIVE', 4.25,
+     '{"fee_type":"regulatory"}');
+
+-- FEE: State environmental fee (regulatory — mandatory)
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
+    ('f1000000-0000-0000-0000-000000000007', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
+     'e1000000-0000-0000-0000-000000000003', 'FEE-ENV-STATE', 'Taxe environnementale', 'FEE', 'ACTIVE', 1.00,
+     '{"fee_type":"regulatory"}');
+
+-- FEE: Shop supplies (operational — mandatory)
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
+    ('f1000000-0000-0000-0000-000000000008', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
+     'e1000000-0000-0000-0000-000000000003', 'FEE-SHOP-SUPPLIES', 'Fournitures atelier', 'FEE', 'ACTIVE', 1.73,
+     '{"fee_type":"operational"}');
+
+-- SERVICE: Protection warranty (optional upsell)
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
+    ('f1000000-0000-0000-0000-000000000009', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
      'e1000000-0000-0000-0000-000000000003', 'SVC-WARRANTY-TYRE', 'Garantie protection pneu (1 an)', 'SERVICE', 'ACTIVE', 9.99,
      '{"duration_months":"12","coverage":"puncture,damage"}');
 
--- Service links: buying any tyre (Michelin PS4) →
---   mandatory: tyre fitting
---   optional:  protection warranty (not pre-ticked)
-INSERT INTO catalog_svc.product_service_links (tenant_id, product_id, service_id, is_mandatory, default_selected, sort_order) VALUES
+-- ── Add-on links for Michelin PS4 (tyre package) ──────────────────────────────
+-- Maps to Firestone-style "Installation Fees" breakdown:
+--   sort 1: Tyre fitting labour            → mandatory
+--   sort 2: Wheel balance                  → mandatory
+--   sort 3: TPMS Valve Kit (physical part) → mandatory
+--   sort 4: TPMS Valve Kit Labour          → mandatory
+--   sort 5: Scrap tyre recycling fee       → mandatory (regulatory)
+--   sort 6: State environmental fee        → mandatory (regulatory)
+--   sort 7: Shop supplies fee              → mandatory (operational)
+--   sort 8: Protection warranty            → optional upsell
+INSERT INTO catalog_svc.product_addon_links (tenant_id, product_id, addon_id, is_mandatory, default_selected, sort_order) VALUES
     ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000002', true,  false, 1),
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', false, false, 2);
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', true,  false, 2),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000004', true,  false, 3),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000005', true,  false, 4),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000006', true,  false, 5),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', true,  false, 6),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000008', true,  false, 7),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000009', false, false, 8);
 
 -- Exclusion example: Lyon store does not offer tyre fitting (no trained staff yet)
 INSERT INTO catalog_svc.store_product_exclusions (tenant_id, store_id, product_id, variant_id, reason) VALUES
