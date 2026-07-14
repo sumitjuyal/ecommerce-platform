@@ -90,6 +90,89 @@ Applies automatically to Bridgestone Turanza T005, Michelin Pilot Sport 4, Toyo 
 
 ---
 
+## Tire Package — Table Diagram
+
+This diagram shows only the tables involved when a tire is sold as a package. `TIRE_PRODUCT` and `ADDON_PRODUCT` both map to the `products` table — separated here to show their distinct roles.
+
+```mermaid
+erDiagram
+
+  TIRE_PRODUCT ||--o{ PRODUCT_VARIANTS            : "has sizes (205/55R16 …)"
+  TIRE_PRODUCT ||--o{ STORE_PRODUCT_EXCLUSIONS    : "excluded at store"
+  PRODUCT_VARIANTS ||--o{ STORE_PRODUCT_EXCLUSIONS : "variant excluded at store"
+  PRODUCT_TYPE_ADDON_LINKS }o--|| ADDON_PRODUCT   : "addon_id (LABOR or FEE)"
+  TIRE_PRODUCT ||--o{ PRODUCT_ADDON_LINKS         : "per-product overrides"
+  ADDON_PRODUCT ||--o{ PRODUCT_ADDON_LINKS        : "override addon"
+
+  TIRE_PRODUCT {
+    uuid    id PK
+    varchar sku           "e.g. BRID-T005"
+    varchar name          "e.g. Bridgestone Turanza T005"
+    varchar brand         "BRIDGESTONE"
+    varchar product_type  "TIRE"
+    varchar status        "ACTIVE"
+    jsonb   attributes    "season, vehicle_type"
+  }
+
+  PRODUCT_VARIANTS {
+    uuid    id PK
+    uuid    product_id FK
+    varchar sku           "e.g. BRID-T005-205-55R16-91V"
+    varchar name          "e.g. 205/55 R16 91V"
+    jsonb   attributes    "tire_size, load_index, speed_rating"
+    varchar status
+    int     sort_order
+  }
+
+  PRODUCT_TYPE_ADDON_LINKS {
+    uuid    id PK
+    uuid    tenant_id
+    varchar product_type  "TIRE — covers every tire in the catalog"
+    uuid    addon_id FK   "→ ADDON_PRODUCT"
+    boolean is_mandatory  "true = auto-added, customer cannot remove"
+    boolean default_selected
+    int     sort_order
+  }
+
+  ADDON_PRODUCT {
+    uuid    id PK
+    varchar sku
+    varchar name          "e.g. Tyre Installation Package"
+    varchar product_type  "LABOR or FEE"
+    numeric base_price    "fixed price — no variants"
+    jsonb   attributes    "fee_type=regulatory for FEE products"
+  }
+
+  PRODUCT_ADDON_LINKS {
+    uuid    id PK
+    uuid    product_id FK "specific tire override"
+    uuid    addon_id FK   "LABOR or FEE being overridden"
+    boolean is_mandatory
+    boolean default_selected
+    int     sort_order
+  }
+
+  STORE_PRODUCT_EXCLUSIONS {
+    uuid    id PK
+    uuid    store_id      "→ tenant_svc.stores.id"
+    uuid    product_id FK "tire or addon excluded"
+    uuid    variant_id FK "NULL = all variants excluded"
+    varchar reason
+  }
+```
+
+**How the package assembles at checkout:**
+
+| Step | Source | Example |
+|---|---|---|
+| 1 | Customer selects a tire variant | Bridgestone T005 205/55 R16 91V |
+| 2 | Load `product_type_addon_links` where `product_type = 'TIRE'` | Installation + Recycling Fee + Env Fee + Warranty |
+| 3 | Merge `product_addon_links` for this specific tire (if any rows exist) | e.g. run-flat skips installation |
+| 4 | Apply `store_product_exclusions` for the selected store | Lyon store: installation excluded |
+| 5 | Result = final add-on set rendered to cart | Mandatory ones auto-added; optional ones shown as upsell |
+
+---
+
 ## Add-on Inheritance — Product Type → Product
 
 Add-ons are defined at the **product type level** and inherited by every product sharing that type. Category membership is irrelevant — a tyre added directly to the catalog without any category still inherits its add-ons.
