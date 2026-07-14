@@ -76,15 +76,15 @@ A SERVICE has one customer-facing price. Internally, it is composed of LABOR, PA
 
 ```
 Michelin PS4 205/55R16 91V    × 4   €823.96   ← PRODUCT + variant, price from pricing_svc
-Forfait montage pneu          × 4   €180.00   ← SERVICE  SVC-TYRE-INSTALL €45.00 each
-Taxe recyclage pneu           × 4   € 17.00   ← FEE      regulatory, separate line by law
-Taxe environnementale         × 4   €  4.00   ← FEE      regulatory, separate line by law
+Tyre Installation Package     × 4   €180.00   ← SERVICE  SVC-TYRE-INSTALL €45.00 each
+Tyre Recycling Fee            × 4   € 17.00   ← FEE      regulatory, separate line by law
+State Environmental Fee       × 4   €  4.00   ← FEE      regulatory, separate line by law
 ──────────────────────────────────────────────
 Subtotal                           €1,024.96
 Taxes                              €   56.95
 Out the door                       €1,081.91
 
-Optional: Garantie protection pneu × 4  €39.96  ← SERVICE opt-in upsell
+Optional: Tyre Protection Warranty × 4  €39.96  ← SERVICE opt-in upsell
 ```
 
 **What lives inside SVC-TYRE-INSTALL (service_bom — internal only):**
@@ -92,11 +92,11 @@ Optional: Garantie protection pneu × 4  €39.96  ← SERVICE opt-in upsell
 ```
 component_name               component_type  qty  unit_cost  total
 ───────────────────────────  ──────────────  ───  ─────────  ──────
-Montage pneu (main d'oeuvre) LABOR           1    €12.00     €12.00
-Équilibrage roue             LABOR           1    €13.99     €13.99
-Kit valve TPMS               PART            1    € 7.99     € 7.99  ← stock deducted
-Pose kit valve TPMS          LABOR           1    € 3.31     € 3.31
-Fournitures atelier          MATERIAL        1    € 1.73     € 1.73
+Tyre fitting labor           LABOR           1    €12.00     €12.00
+Wheel balance labor          LABOR           1    €13.99     €13.99
+TPMS valve kit               PART            1    € 7.99     € 7.99  ← stock deducted
+TPMS valve kit labor         LABOR           1    € 3.31     € 3.31
+Shop supplies                MATERIAL        1    € 1.73     € 1.73
 ─────────────────────────────────────────────────────────────────
 Internal cost                                     €38.02
 Selling price                                     €45.00
@@ -108,9 +108,9 @@ Margin                                            € 6.98  (18.4%)
 ```
 component_name               component_type  qty  unit_cost  total
 ───────────────────────────  ──────────────  ───  ─────────  ──────
-Huile moteur 5W-30 5L        MATERIAL        1    €15.00     €15.00  ← stock deducted
-Filtre à huile               PART            1    € 8.00     € 8.00  ← stock deducted
-Main d'oeuvre vidange        LABOR           1    €26.99     €26.99
+Engine oil 5W-30 5L          MATERIAL        1    €15.00     €15.00  ← stock deducted
+Oil filter                   PART            1    € 8.00     € 8.00  ← stock deducted
+Oil change labor             LABOR           1    €26.99     €26.99
 ─────────────────────────────────────────────────────────────────
 Internal cost                                     €49.99
 Selling price                                     €49.99

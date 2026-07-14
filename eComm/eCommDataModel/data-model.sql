@@ -528,9 +528,9 @@ INSERT INTO tenant_svc.tenant_settings (tenant_id, key, value) VALUES
 
 -- Stores
 INSERT INTO tenant_svc.stores (id, tenant_id, code, name, locale, email, phone, store_type, status) VALUES
-    ('d1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'SPD-75001', 'Speedy Paris 1er',  'fr-FR', 'paris1@speedy.fr',  '+33 1 40 00 00 01', 'PHYSICAL', 'ACTIVE'),
-    ('d1000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'SPD-75008', 'Speedy Paris 8ème', 'fr-FR', 'paris8@speedy.fr',  '+33 1 40 00 00 02', 'PHYSICAL', 'ACTIVE'),
-    ('d1000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'SPD-69001', 'Speedy Lyon Centre','fr-FR', 'lyon@speedy.fr',    '+33 4 72 00 00 01', 'PHYSICAL', 'ACTIVE');
+    ('d1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'SPD-75001', 'Speedy Paris 1st District',  'fr-FR', 'paris1@speedy.fr', '+33 1 40 00 00 01', 'PHYSICAL', 'ACTIVE'),
+    ('d1000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'SPD-75008', 'Speedy Paris 8th District',  'fr-FR', 'paris8@speedy.fr', '+33 1 40 00 00 02', 'PHYSICAL', 'ACTIVE'),
+    ('d1000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'SPD-69001', 'Speedy Lyon Centre',          'fr-FR', 'lyon@speedy.fr',   '+33 4 72 00 00 01', 'PHYSICAL', 'ACTIVE');
 
 -- Store addresses
 INSERT INTO tenant_svc.store_addresses (tenant_id, store_id, address_type, line1, city, postal_code, country_code, latitude, longitude, is_primary) VALUES
@@ -550,8 +550,8 @@ INSERT INTO tenant_svc.store_hours (tenant_id, store_id, day_of_week, open_time,
 
 -- Holiday hours — Paris 1er
 INSERT INTO tenant_svc.store_holiday_hours (tenant_id, store_id, holiday_date, is_closed, description) VALUES
-    ('a1000000-0000-0000-0000-000000000001', 'd1000000-0000-0000-0000-000000000001', '2026-07-14', true, 'Fête Nationale — Bastille Day'),
-    ('a1000000-0000-0000-0000-000000000001', 'd1000000-0000-0000-0000-000000000001', '2026-12-25', true, 'Noël');
+    ('a1000000-0000-0000-0000-000000000001', 'd1000000-0000-0000-0000-000000000001', '2026-07-14', true, 'Bastille Day — National Holiday'),
+    ('a1000000-0000-0000-0000-000000000001', 'd1000000-0000-0000-0000-000000000001', '2026-12-25', true, 'Christmas Day');
 
 -- Tenant admin user
 INSERT INTO tenant_svc.tenant_users (id, tenant_id, email, first_name, last_name, status) VALUES
@@ -565,7 +565,7 @@ INSERT INTO tenant_svc.tenant_user_roles (tenant_id, user_id, store_id, role) VA
 -- ── Catalog seed ──────────────────────────────────────────────────────────────
 
 INSERT INTO catalog_svc.catalogs (id, tenant_id, name, default_locale, currency_code, status) VALUES
-    ('b1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'Speedy France Catalogue', 'fr-FR', 'EUR', 'ACTIVE');
+    ('b1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'Speedy France Product Catalog', 'fr-FR', 'EUR', 'ACTIVE');
 
 UPDATE tenant_svc.tenants
 SET catalog_id = 'b1000000-0000-0000-0000-000000000001'
@@ -573,15 +573,15 @@ WHERE id = 'a1000000-0000-0000-0000-000000000001';
 
 -- Root categories
 INSERT INTO catalog_svc.categories (id, tenant_id, catalog_id, parent_id, code, name, sort_order) VALUES
-    ('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', NULL, 'TYRES',    'Pneumatiques',    1),
-    ('e1000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', NULL, 'PARTS',    'Pièces détachées', 2),
-    ('e1000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', NULL, 'SERVICES', 'Services',        3);
+    ('e1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', NULL, 'TYRES',    'Tyres',    1),
+    ('e1000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', NULL, 'PARTS',    'Parts',    2),
+    ('e1000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', NULL, 'SERVICES', 'Services', 3);
 
 -- Sub-categories under TYRES
 INSERT INTO catalog_svc.categories (id, tenant_id, catalog_id, parent_id, code, name, sort_order) VALUES
-    ('e2000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'TYRES_SUMMER',  'Pneus Été',       1),
-    ('e2000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'TYRES_WINTER',  'Pneus Hiver',     2),
-    ('e2000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'TYRES_ALLSEASON','Pneus 4 Saisons', 3);
+    ('e2000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'TYRES_SUMMER',   'Summer Tyres',     1),
+    ('e2000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'TYRES_WINTER',   'Winter Tyres',     2),
+    ('e2000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'TYRES_ALLSEASON', 'All-Season Tyres', 3);
 
 -- Sample PRODUCT — tyre
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, brand, product_type, status, attributes) VALUES
@@ -609,49 +609,49 @@ INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, n
 -- SERVICE: Tyre Installation Package (one price, customer sees one line)
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price) VALUES
     ('f1000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'SVC-TYRE-INSTALL', 'Forfait montage pneu', 'SERVICE', 'ACTIVE', 45.00);
+     'e1000000-0000-0000-0000-000000000003', 'SVC-TYRE-INSTALL', 'Tyre Installation Package', 'SERVICE', 'ACTIVE', 45.00);
 
 -- FEE: Scrap tyre recycling (regulatory — mandatory, separate invoice line by law)
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
     ('f1000000-0000-0000-0000-000000000004', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'FEE-TYRE-RECYCLING', 'Taxe recyclage pneu', 'FEE', 'ACTIVE', 4.25,
+     'e1000000-0000-0000-0000-000000000003', 'FEE-TYRE-RECYCLING', 'Tyre Recycling Fee', 'FEE', 'ACTIVE', 4.25,
      '{"fee_type":"regulatory"}');
 
 -- FEE: State environmental fee (regulatory — mandatory, separate invoice line by law)
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
     ('f1000000-0000-0000-0000-000000000005', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'FEE-ENV-STATE', 'Taxe environnementale', 'FEE', 'ACTIVE', 1.00,
+     'e1000000-0000-0000-0000-000000000003', 'FEE-ENV-STATE', 'State Environmental Fee', 'FEE', 'ACTIVE', 1.00,
      '{"fee_type":"regulatory"}');
 
 -- SERVICE: Protection warranty (optional upsell)
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
     ('f1000000-0000-0000-0000-000000000006', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'SVC-WARRANTY-TYRE', 'Garantie protection pneu (1 an)', 'SERVICE', 'ACTIVE', 9.99,
+     'e1000000-0000-0000-0000-000000000003', 'SVC-WARRANTY-TYRE', 'Tyre Protection Warranty (1 year)', 'SERVICE', 'ACTIVE', 9.99,
      '{"duration_months":"12","coverage":"puncture,damage"}');
 
 -- SERVICE: Oil Change (customer sees one price — BOM covers oil + filter + labor internally)
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price) VALUES
     ('f1000000-0000-0000-0000-000000000007', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'SVC-OIL-CHANGE', 'Vidange huile moteur', 'SERVICE', 'ACTIVE', 49.99);
+     'e1000000-0000-0000-0000-000000000003', 'SVC-OIL-CHANGE', 'Engine Oil Change', 'SERVICE', 'ACTIVE', 49.99);
 
 -- ── BOM: Tyre Installation Package — internal cost breakdown ─────────────────
--- Customer sees: "Forfait montage pneu — €45.00"
+-- Customer sees: "Tyre Installation Package — €45.00"
 -- Internally: labor + consumable parts + shop supplies
 INSERT INTO catalog_svc.service_bom (tenant_id, service_id, component_name, component_sku, component_type, quantity, unit_cost, sort_order) VALUES
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Montage pneu (main d''oeuvre)',    null,             'LABOR',    1, 12.00, 1),
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Équilibrage roue',                null,             'LABOR',    1, 13.99, 2),
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Kit valve TPMS',                  'PART-TPMS-VALVE', 'PART',     1,  7.99, 3),
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Pose kit valve TPMS',             null,             'LABOR',    1,  3.31, 4),
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Fournitures atelier',             null,             'MATERIAL', 1,  1.73, 5);
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Tyre fitting labor',      null,              'LABOR',    1, 12.00, 1),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Wheel balance labor',     null,              'LABOR',    1, 13.99, 2),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'TPMS valve kit',          'PART-TPMS-VALVE', 'PART',     1,  7.99, 3),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'TPMS valve kit labor',    null,              'LABOR',    1,  3.31, 4),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Shop supplies',           null,              'MATERIAL', 1,  1.73, 5);
 -- Internal cost: €38.02  |  Selling price: €45.00  |  Margin: €6.98 (18.4%)
 
 -- ── BOM: Oil Change — internal cost breakdown ─────────────────────────────────
--- Customer sees: "Vidange huile moteur — €49.99"
+-- Customer sees: "Engine Oil Change — €49.99"
 -- Internally: oil + filter consumables + labor
 INSERT INTO catalog_svc.service_bom (tenant_id, service_id, component_name, component_sku, component_type, quantity, unit_cost, sort_order) VALUES
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', 'Huile moteur 5W-30 5L',           'OIL-5W30-5L',    'MATERIAL', 1, 15.00, 1),
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', 'Filtre à huile',                  'PART-OIL-FILTER', 'PART',     1,  8.00, 2),
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', 'Main d''oeuvre vidange',           null,             'LABOR',    1, 26.99, 3);
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', 'Engine oil 5W-30 5L',    'OIL-5W30-5L',     'MATERIAL', 1, 15.00, 1),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', 'Oil filter',             'PART-OIL-FILTER',  'PART',     1,  8.00, 2),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', 'Oil change labor',        null,              'LABOR',    1, 26.99, 3);
 -- Internal cost: €49.99  |  Selling price: €49.99  |  Margin: €0 (passed through at cost)
 
 -- ── Category add-on links — TYRES category ───────────────────────────────────
