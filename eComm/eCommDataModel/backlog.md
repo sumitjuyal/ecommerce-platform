@@ -60,4 +60,48 @@ Not yet seeded. Ready to add when services catalog is built out.
 
 ## Order Domain
 
-*(populated as order design sessions progress)*
+### Tax Design
+**Parked during:** Order domain design session
+**Context:** Tax placeholder columns (`tax_amount`) exist on `cart_lines` and `order_lines`. No calculation logic designed yet.
+**What needs designing:**
+- Tax rule source — flat rate per tenant/store, or rule engine (product type × jurisdiction)?
+- VAT vs. sales tax handling for multi-country expansion
+- Tax-inclusive vs. tax-exclusive pricing display
+- Whether tax is stored as a rate or an amount on the line
+**Depends on:** Pricing domain (is tax part of the displayed price?)
+
+---
+
+### Promotion Engine — Job Hierarchy
+**Parked during:** Order domain design session
+**Context:** Current engine (`Cart.java`) takes a flat `List<CartItem>`. Order domain is designed around `Cart → List<Job> → List<CartItem>`. The engine needs to evolve to support job-level promotions.
+**What needs doing:**
+- Add `Job` wrapper model to `Cart.java`: `List<Job> jobs` where `Job { jobId, packageId, couponCode, List<CartItem> items }`
+- Add a third Drools agenda group `"job"` between `"item"` and `"order"`
+- Job discount must be spread proportionally across lines in the job (same approach as order discount)
+- `cart_jobs.coupon_code` and `order_jobs.coupon_code` columns are already present in the schema — no DDL change needed
+**Depends on:** Promotion engine project (`promotion-engine/src/main/java/.../model/`)
+
+---
+
+### Package Service Design
+**Parked during:** Order domain design session
+**Context:** `cart_jobs.package_id` references a future `package_svc`. A package is a pre-defined grouping of articles (TIRE + LABOR + FEE) that the cart resolves into job lines.
+**What needs designing:**
+- `packages` table: `(id, tenant_id, name, product_type_target)`
+- `package_items` table: `(package_id, product_id, variant_id, qty, is_mandatory)` — the articles that make up the package
+- How packages interact with `product_type_addon_links` — does the package override addon resolution, or supplement it?
+- Store-level package exclusions
+**Depends on:** Catalog domain (packages reference catalog articles)
+
+---
+
+### Appointment Service Design
+**Parked during:** Order domain design session
+**Context:** `cart_jobs.appointment_id` and `order_jobs.appointment_id` are logical references to a future `appointment_svc`. Two jobs in one order can share the same appointment ID (same visit).
+**What needs designing:**
+- Appointment booking flow — created before or after cart checkout?
+- Slot availability model (store capacity, technician assignment)
+- Appointment cancellation cascade when order is cancelled
+- Time zone handling per store
+**Depends on:** Order domain (appointment linked at job level)
