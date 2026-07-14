@@ -8,6 +8,8 @@
 | Categories form a tree | `categories.parent_id` self-reference — unlimited depth |
 | Every item in the catalog is an article with a SKU | `products.sku` NOT NULL — TIRE, PART, LABOR, FEE, and BUNDLE are all articles |
 | `product_type` drives behaviour, not article status | Type controls: variants, pricing location, invoice rendering — not whether something is a real article |
+| Every article has a unit of measurement | `products.uom` — EACH, JOB, LITER, QUART, HOUR |
+| Addon qty is controlled by the link, not the article | `qty_mode` on `product_type_addon_links` / `product_addon_links` — PER_UNIT (× parent qty) or PER_JOB (always 1) |
 | Sellable tire/part items are variants | `product_variants` — one row per size/colour/spec combination |
 | Single-SKU product still has one variant | Keeps pricing and inventory anchored to `variant_id` consistently |
 | LABOR and FEE articles have no variants | Price on `products.base_price` — the SKU itself is the sellable unit |
@@ -27,32 +29,36 @@ Every row in the `products` table is an **article** — it has its own `sku`, `n
 
 ### TIRE
 A physical tyre article (e.g. SKU `BRID-T005`, Bridgestone Turanza T005).
+- **UOM: EACH** — sold per tyre
 - Has one or more **variants** (e.g. 205/55R16, 225/45R17) — the variant is the sellable SKU
 - Price is set at the variant level in `pricing_svc`
-- **Single-size tyre:** still creates one variant row — keeps pricing/inventory logic uniform
 - Automatically inherits add-ons (installation, fees, warranty) via `product_type_addon_links`
 
 ### PART
 A physical accessory or replacement part article (e.g. SKU `PART-TPMS-VALVE`, TPMS Valve Kit).
+- **UOM: EACH** — sold per piece or per kit
 - Has variants when multiple sizes/specs exist; single-spec parts have one variant row
 - Price at the variant level in `pricing_svc`
 - Can be linked as a mandatory or optional add-on to a TIRE via `product_addon_links`
 
 ### LABOR
-A labour or service article — has its own SKU and is invoiced as a line item (e.g. SKU `SVC-TYRE-INSTALL`, Tyre Installation Package).
-- **No variants** — the SKU itself is the sellable unit
-- Price on `products.base_price`
-- Linked as a mandatory or optional add-on via `product_type_addon_links`
+A labour or service article — has its own SKU and is invoiced as a line item.
+- **UOM: EACH** (per unit — e.g. tyre installation, warranty) or **JOB** (flat once — e.g. wheel alignment, tyre rotation)
+- **No variants** — the SKU itself is the sellable unit; price on `products.base_price`
+- When used as an addon, `qty_mode` on the link controls whether qty multiplies with parent (`PER_UNIT`) or is always 1 (`PER_JOB`)
+- Examples: `SVC-TYRE-INSTALL` EACH/PER_UNIT, `SVC-WHEEL-ALIGN` JOB/PER_JOB
 
 ### FEE
-A regulatory charge article — has its own SKU and must appear as a **separate line on the invoice** by law (e.g. SKU `FEE-TYRE-RECYCLING`, Tyre Recycling Fee).
-- **No variants** — the SKU itself is the sellable unit
-- Price on `products.base_price`
+A regulatory charge article — has its own SKU and must appear as a **separate line on the invoice** by law.
+- **UOM: EACH** (per unit) or **JOB** (flat per transaction)
+- **No variants** — price on `products.base_price`
 - `attributes.fee_type` = `'regulatory'` — drives invoice rendering and tax treatment
 - Customer cannot remove a mandatory FEE from the cart
+- Examples: `FEE-TYRE-RECYCLING` EACH/PER_UNIT (one per tyre scrapped)
 
 ### BUNDLE
 A fixed pre-packaged article sold as a single unit with one SKU and one bundle price.
+- **UOM: EACH**
 - Components are defined in `bundle_items` (future table — not yet implemented)
 - Example: SKU `BUN-WINTER-PACK` = 4 winter tyres + fitting + storage at one fixed price
 
@@ -86,16 +92,17 @@ Tyre Protection Warranty (1 year)         SVC-WARRANTY-TYRE      LABOR   × 4   
 
 ### Where each article comes from in the data model
 
-| Invoice line | Table | Key column | Value |
+| Invoice line | Table | Key columns | Values |
 |---|---|---|---|
-| Bridgestone Turanza T005 | `products` | `product_type` | `TIRE` |
+| Bridgestone Turanza T005 | `products` | `product_type`, `uom` | `TIRE`, `EACH` |
 | 205/55 R16 91V size | `product_variants` | `sku` | `BRID-T005-205-55R16-91V` |
-| Tyre Installation Package | `products` | `product_type` | `LABOR` — `base_price = 45.00` |
-| Tyre Recycling Fee | `products` | `product_type` | `FEE` — `attributes.fee_type = regulatory` |
-| State Environmental Fee | `products` | `product_type` | `FEE` — `attributes.fee_type = regulatory` |
-| Tyre Protection Warranty | `products` | `product_type` | `LABOR` — `base_price = 9.99` |
-| Why installation & fees auto-appear | `product_type_addon_links` | `product_type = 'TIRE'` | `is_mandatory = true` |
-| Why warranty is optional | `product_type_addon_links` | `product_type = 'TIRE'` | `is_mandatory = false` |
+| Tyre Installation Package | `products` | `product_type`, `uom`, `base_price` | `LABOR`, `EACH`, `45.00` |
+| Tyre Recycling Fee | `products` | `product_type`, `uom`, `attributes` | `FEE`, `EACH`, `fee_type=regulatory` |
+| State Environmental Fee | `products` | `product_type`, `uom`, `attributes` | `FEE`, `EACH`, `fee_type=regulatory` |
+| Tyre Protection Warranty | `products` | `product_type`, `uom`, `base_price` | `LABOR`, `EACH`, `9.99` |
+| Why installation & fees auto-appear | `product_type_addon_links` | `product_type`, `is_mandatory`, `qty_mode` | `TIRE`, `true`, `PER_UNIT` |
+| Why warranty is optional | `product_type_addon_links` | `product_type`, `is_mandatory`, `qty_mode` | `TIRE`, `false`, `PER_UNIT` |
+| Why all addons multiply × 4 (4 tyres) | `product_type_addon_links` | `qty_mode` | `PER_UNIT` — addon qty = parent tyre qty |
 
 ### Table relationships
 
@@ -115,6 +122,7 @@ erDiagram
     varchar name          "Bridgestone Turanza T005"
     varchar brand         "BRIDGESTONE"
     varchar product_type  "TIRE"
+    varchar uom           "EACH"
     varchar status        "ACTIVE"
     jsonb   attributes    "season=summer, vehicle_type=passenger"
   }
@@ -131,11 +139,12 @@ erDiagram
 
   PRODUCT_TYPE_ADDON_LINKS {
     uuid    id PK
-    varchar product_type  "TIRE — one rule covers every tire article"
-    uuid    addon_id FK   "points to an ADDON_PRODUCT row"
-    boolean is_mandatory  "true = auto-added, customer cannot remove"
+    varchar product_type     "TIRE — one rule covers every tire article"
+    uuid    addon_id FK      "points to an ADDON_PRODUCT row"
+    boolean is_mandatory     "true = auto-added, customer cannot remove"
     boolean default_selected "true = pre-ticked optional addon"
-    int     sort_order    "controls invoice / cart display order"
+    varchar qty_mode         "PER_UNIT = × tyre qty | PER_JOB = always 1"
+    int     sort_order       "controls invoice / cart display order"
   }
 
   ADDON_PRODUCT {
@@ -144,16 +153,18 @@ erDiagram
     varchar name          "Tyre Installation Package / Tyre Recycling Fee / …"
     varchar brand         "article field — same as any other product"
     varchar product_type  "LABOR or FEE"
+    varchar uom           "EACH (per tyre) or JOB (flat once)"
     numeric base_price    "45.00 / 4.25 / … — no variants needed"
     jsonb   attributes    "fee_type=regulatory for FEE articles"
   }
 
   PRODUCT_ADDON_LINKS {
     uuid    id PK
-    uuid    product_id FK "specific tire that overrides the type default"
-    uuid    addon_id FK   "the LABOR or FEE article being overridden"
+    uuid    product_id FK    "specific tire that overrides the type default"
+    uuid    addon_id FK      "the LABOR or FEE article being overridden"
     boolean is_mandatory
     boolean default_selected
+    varchar qty_mode         "PER_UNIT or PER_JOB — overrides type-level default"
     int     sort_order
   }
 
@@ -259,6 +270,7 @@ erDiagram
     text        description
     varchar     brand
     varchar     product_type          "TIRE | PART | LABOR | FEE | BUNDLE"
+    varchar     uom                   "EACH | JOB | LITER | QUART | HOUR"
     varchar     status                "DRAFT | ACTIVE | DISCONTINUED"
     numeric     base_price            "LABOR and FEE types — no variants"
     jsonb       attributes            "flexible bag: season, vehicle_type, fee_type, etc."
@@ -294,9 +306,10 @@ erDiagram
     uuid        id PK
     uuid        tenant_id             "denormalised"
     varchar     product_type          "TIRE | PART | LABOR | FEE | BUNDLE"
-    uuid        addon_id FK           "LABOR or FEE product"
+    uuid        addon_id FK           "LABOR or FEE article"
     boolean     is_mandatory          "true = auto-added, cannot be removed"
     boolean     default_selected      "true = pre-ticked for optional add-ons"
+    varchar     qty_mode              "PER_UNIT = × parent qty | PER_JOB = always 1"
     int         sort_order            "UI display order"
     timestamptz created_at
     timestamptz updated_at
@@ -306,9 +319,10 @@ erDiagram
     uuid        id PK
     uuid        tenant_id             "denormalised"
     uuid        product_id FK         "specific product override"
-    uuid        addon_id FK           "SERVICE, PRODUCT (part), or FEE"
-    boolean     is_mandatory          "overrides category-level value"
+    uuid        addon_id FK           "LABOR, PART, or FEE article"
+    boolean     is_mandatory          "overrides type-level value"
     boolean     default_selected
+    varchar     qty_mode              "PER_UNIT = × parent qty | PER_JOB = always 1"
     int         sort_order
     timestamptz created_at
     timestamptz updated_at

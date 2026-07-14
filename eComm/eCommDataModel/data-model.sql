@@ -312,9 +312,11 @@ CREATE TABLE catalog_svc.products (
     brand           varchar(100),
     product_type    varchar(30)     NOT NULL
                         CHECK (product_type IN ('TIRE','PART','LABOR','FEE','BUNDLE')),
+    uom             varchar(20)     NOT NULL DEFAULT 'EACH'
+                        CHECK (uom IN ('EACH','JOB','LITER','QUART','HOUR')),
     status          varchar(20)     NOT NULL DEFAULT 'ACTIVE'
                         CHECK (status IN ('DRAFT','ACTIVE','DISCONTINUED')),
-    -- SERVICE type products have no variants — price is on the product directly
+    -- LABOR and FEE articles have no variants — price is on the product directly
     base_price      numeric(12,4),
     attributes      jsonb           NOT NULL DEFAULT '{}',  -- flexible key/value bag
     image_url       varchar(500),
@@ -393,6 +395,8 @@ CREATE TABLE catalog_svc.product_type_addon_links (
     addon_id            uuid            NOT NULL REFERENCES catalog_svc.products (id),  -- LABOR or FEE
     is_mandatory        boolean         NOT NULL DEFAULT false,
     default_selected    boolean         NOT NULL DEFAULT false,
+    qty_mode            varchar(10)     NOT NULL DEFAULT 'PER_UNIT'
+                            CHECK (qty_mode IN ('PER_UNIT','PER_JOB')),
     sort_order          integer         NOT NULL DEFAULT 0,
     created_at          timestamptz     NOT NULL DEFAULT now(),
     updated_at          timestamptz     NOT NULL DEFAULT now()
@@ -422,9 +426,11 @@ CREATE TABLE catalog_svc.product_addon_links (
     id                  uuid            PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id           uuid            NOT NULL,
     product_id          uuid            NOT NULL REFERENCES catalog_svc.products (id),  -- the parent PRODUCT
-    addon_id            uuid            NOT NULL REFERENCES catalog_svc.products (id),  -- SERVICE, PRODUCT, or FEE
+    addon_id            uuid            NOT NULL REFERENCES catalog_svc.products (id),  -- LABOR, PART, or FEE
     is_mandatory        boolean         NOT NULL DEFAULT false,
     default_selected    boolean         NOT NULL DEFAULT false,
+    qty_mode            varchar(10)     NOT NULL DEFAULT 'PER_UNIT'
+                            CHECK (qty_mode IN ('PER_UNIT','PER_JOB')),
     sort_order          integer         NOT NULL DEFAULT 0,
     created_at          timestamptz     NOT NULL DEFAULT now(),
     updated_at          timestamptz     NOT NULL DEFAULT now(),
@@ -545,9 +551,9 @@ INSERT INTO catalog_svc.categories (id, tenant_id, catalog_id, parent_id, code, 
     ('e2000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'TYRES_ALLSEASON', 'All-Season Tyres', 3);
 
 -- TIRE: Bridgestone Turanza T005 (Summer — passenger)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, brand, product_type, status, attributes) VALUES
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, brand, product_type, uom, status, attributes) VALUES
     ('f1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e2000000-0000-0000-0000-000000000001', 'BRID-T005', 'Bridgestone Turanza T005', 'BRIDGESTONE', 'TIRE', 'ACTIVE',
+     'e2000000-0000-0000-0000-000000000001', 'BRID-T005', 'Bridgestone Turanza T005', 'BRIDGESTONE', 'TIRE', 'EACH', 'ACTIVE',
      '{"season":"summer","vehicle_type":"passenger"}');
 
 -- Variants for Bridgestone Turanza T005
@@ -559,27 +565,27 @@ INSERT INTO catalog_svc.product_variants (id, tenant_id, product_id, sku, name, 
 
 -- ── Add-on products: labor and fees inherited by all TIRE products ────────────
 
--- LABOR: Tyre Installation Package
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price) VALUES
+-- LABOR: Tyre Installation Package (EACH — charged per tyre fitted)
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, uom, status, base_price) VALUES
     ('f1000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'SVC-TYRE-INSTALL', 'Tyre Installation Package', 'LABOR', 'ACTIVE', 45.00);
+     'e1000000-0000-0000-0000-000000000003', 'SVC-TYRE-INSTALL', 'Tyre Installation Package', 'LABOR', 'EACH', 'ACTIVE', 45.00);
 
--- FEE: Scrap tyre recycling (regulatory — mandatory, separate invoice line by law)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
+-- FEE: Scrap tyre recycling (EACH — one fee per tyre, regulatory, separate invoice line by law)
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, uom, status, base_price, attributes) VALUES
     ('f1000000-0000-0000-0000-000000000004', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'FEE-TYRE-RECYCLING', 'Tyre Recycling Fee', 'FEE', 'ACTIVE', 4.25,
+     'e1000000-0000-0000-0000-000000000003', 'FEE-TYRE-RECYCLING', 'Tyre Recycling Fee', 'FEE', 'EACH', 'ACTIVE', 4.25,
      '{"fee_type":"regulatory"}');
 
--- FEE: State environmental fee (regulatory — mandatory, separate invoice line by law)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
+-- FEE: State environmental fee (EACH — one fee per tyre, regulatory, separate invoice line by law)
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, uom, status, base_price, attributes) VALUES
     ('f1000000-0000-0000-0000-000000000005', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'FEE-ENV-STATE', 'State Environmental Fee', 'FEE', 'ACTIVE', 1.00,
+     'e1000000-0000-0000-0000-000000000003', 'FEE-ENV-STATE', 'State Environmental Fee', 'FEE', 'EACH', 'ACTIVE', 1.00,
      '{"fee_type":"regulatory"}');
 
--- LABOR: Protection warranty (optional upsell)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
+-- LABOR: Tyre Protection Warranty (EACH — one warranty per tyre, optional upsell)
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, uom, status, base_price, attributes) VALUES
     ('f1000000-0000-0000-0000-000000000006', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'SVC-WARRANTY-TYRE', 'Tyre Protection Warranty (1 year)', 'LABOR', 'ACTIVE', 9.99,
+     'e1000000-0000-0000-0000-000000000003', 'SVC-WARRANTY-TYRE', 'Tyre Protection Warranty (1 year)', 'LABOR', 'EACH', 'ACTIVE', 9.99,
      '{"duration_months":"12","coverage":"puncture,damage"}');
 
 -- ── Product type add-on links — TIRE type ─────────────────────────────────────
@@ -589,11 +595,11 @@ INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, n
 -- sort 2: Recycling fee              → mandatory (regulatory, separate invoice line)
 -- sort 3: Environmental fee          → mandatory (regulatory, separate invoice line)
 -- sort 4: Protection warranty        → optional upsell
-INSERT INTO catalog_svc.product_type_addon_links (tenant_id, product_type, addon_id, is_mandatory, default_selected, sort_order) VALUES
-    ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000003', true,  false, 1),
-    ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000004', true,  false, 2),
-    ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000005', true,  false, 3),
-    ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000006', false, false, 4);
+INSERT INTO catalog_svc.product_type_addon_links (tenant_id, product_type, addon_id, is_mandatory, default_selected, qty_mode, sort_order) VALUES
+    ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000003', true,  false, 'PER_UNIT', 1),  -- installation × tyre qty
+    ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000004', true,  false, 'PER_UNIT', 2),  -- recycling fee × tyre qty
+    ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000005', true,  false, 'PER_UNIT', 3),  -- env fee × tyre qty
+    ('a1000000-0000-0000-0000-000000000001', 'TIRE', 'f1000000-0000-0000-0000-000000000006', false, false, 'PER_UNIT', 4);  -- warranty × tyre qty (optional)
 
 -- No product_addon_links rows needed for Michelin PS4 — it inherits all from TIRE type.
 
