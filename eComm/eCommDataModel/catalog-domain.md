@@ -62,95 +62,96 @@ A fixed pre-packaged article sold as a single unit with one SKU and one bundle p
 
 ---
 
-## Real-World Example — Tyre Package
-
-**What the customer sees (invoice):**
-
-```
-Bridgestone Turanza T005 205/55R16 91V  × 4   €823.96   ← TIRE + variant, price from pricing_svc
-Tyre Installation Package              × 4   €180.00   ← LABOR  SVC-TYRE-INSTALL €45.00 each
-Tyre Recycling Fee            × 4   € 17.00   ← FEE      regulatory, separate line by law
-State Environmental Fee       × 4   €  4.00   ← FEE      regulatory, separate line by law
-──────────────────────────────────────────────
-Subtotal                           €1,024.96
-Taxes                              €   56.95
-Out the door                       €1,081.91
-
-Optional: Tyre Protection Warranty × 4  €39.96  ← SERVICE opt-in upsell
-```
-
-**How add-ons are linked (product_type_addon_links on type TIRE):**
-
-```
-product_type = TIRE
-  └── SVC-TYRE-INSTALL    is_mandatory=true   sort=1  (every tyre sold includes install)
-  └── FEE-TYRE-RECYCLING  is_mandatory=true   sort=2  (law requires separate line)
-  └── FEE-ENV-STATE       is_mandatory=true   sort=3  (law requires separate line)
-  └── SVC-WARRANTY-TYRE   is_mandatory=false  sort=4  (optional upsell)
-```
-
-Applies automatically to Bridgestone Turanza T005, Michelin Pilot Sport 4, Toyo PROXES — every tyre, regardless of category.
-
----
-
 ## Tire Package — Table Diagram
 
-This diagram shows only the tables involved when a tire is sold as a package. `TIRE_PRODUCT` and `ADDON_PRODUCT` both map to the same `products` table — every article (TIRE, LABOR, FEE) has its own SKU, name, and brand. They are separated here only to show their distinct roles in the package.
+Every article in the catalog — TIRE, PART, LABOR, FEE — is a row in `products` with its own `sku`, `name`, and `brand`. `product_type` only controls behaviour: whether variants exist, where the price lives, and how the line appears on the invoice. `TIRE_PRODUCT` and `ADDON_PRODUCT` below both come from the same `products` table; they are labelled separately to show their roles in the package.
+
+### What the customer sees (invoice)
+
+```
+Article                                   SKU                    Type    × Qty   Line total
+────────────────────────────────────────────────────────────────────────────────────────────
+Bridgestone Turanza T005 205/55 R16 91V   BRID-T005-205-55R16    TIRE    × 4     €823.96
+Tyre Installation Package                 SVC-TYRE-INSTALL       LABOR   × 4     €180.00
+Tyre Recycling Fee                        FEE-TYRE-RECYCLING     FEE     × 4     € 17.00
+State Environmental Fee                   FEE-ENV-STATE          FEE     × 4     €  4.00
+────────────────────────────────────────────────────────────────────────────────────────────
+Subtotal                                                                          €1,024.96
+Taxes                                                                             €   56.95
+Out the door                                                                      €1,081.91
+
+Optional (shown as upsell):
+Tyre Protection Warranty (1 year)         SVC-WARRANTY-TYRE      LABOR   × 4     €  39.96
+```
+
+### Where each article comes from in the data model
+
+| Invoice line | Table | Key column | Value |
+|---|---|---|---|
+| Bridgestone Turanza T005 | `products` | `product_type` | `TIRE` |
+| 205/55 R16 91V size | `product_variants` | `sku` | `BRID-T005-205-55R16-91V` |
+| Tyre Installation Package | `products` | `product_type` | `LABOR` — `base_price = 45.00` |
+| Tyre Recycling Fee | `products` | `product_type` | `FEE` — `attributes.fee_type = regulatory` |
+| State Environmental Fee | `products` | `product_type` | `FEE` — `attributes.fee_type = regulatory` |
+| Tyre Protection Warranty | `products` | `product_type` | `LABOR` — `base_price = 9.99` |
+| Why installation & fees auto-appear | `product_type_addon_links` | `product_type = 'TIRE'` | `is_mandatory = true` |
+| Why warranty is optional | `product_type_addon_links` | `product_type = 'TIRE'` | `is_mandatory = false` |
+
+### Table relationships
 
 ```mermaid
 erDiagram
 
-  TIRE_PRODUCT ||--o{ PRODUCT_VARIANTS            : "has sizes (205/55R16 …)"
-  TIRE_PRODUCT ||--o{ STORE_PRODUCT_EXCLUSIONS    : "excluded at store"
+  TIRE_PRODUCT ||--o{ PRODUCT_VARIANTS             : "has sizes (205/55R16 …)"
+  TIRE_PRODUCT ||--o{ STORE_PRODUCT_EXCLUSIONS     : "excluded at store"
   PRODUCT_VARIANTS ||--o{ STORE_PRODUCT_EXCLUSIONS : "variant excluded at store"
-  PRODUCT_TYPE_ADDON_LINKS }o--|| ADDON_PRODUCT   : "addon_id (LABOR or FEE)"
-  TIRE_PRODUCT ||--o{ PRODUCT_ADDON_LINKS         : "per-product overrides"
-  ADDON_PRODUCT ||--o{ PRODUCT_ADDON_LINKS        : "override addon"
+  PRODUCT_TYPE_ADDON_LINKS }o--|| ADDON_PRODUCT    : "addon_id — LABOR or FEE article"
+  TIRE_PRODUCT ||--o{ PRODUCT_ADDON_LINKS          : "per-product overrides"
+  ADDON_PRODUCT ||--o{ PRODUCT_ADDON_LINKS         : "override addon"
 
   TIRE_PRODUCT {
     uuid    id PK
-    varchar sku           "e.g. BRID-T005"
-    varchar name          "e.g. Bridgestone Turanza T005"
+    varchar sku           "BRID-T005"
+    varchar name          "Bridgestone Turanza T005"
     varchar brand         "BRIDGESTONE"
     varchar product_type  "TIRE"
     varchar status        "ACTIVE"
-    jsonb   attributes    "season, vehicle_type"
+    jsonb   attributes    "season=summer, vehicle_type=passenger"
   }
 
   PRODUCT_VARIANTS {
     uuid    id PK
     uuid    product_id FK
-    varchar sku           "e.g. BRID-T005-205-55R16-91V"
-    varchar name          "e.g. 205/55 R16 91V"
-    jsonb   attributes    "tire_size, load_index, speed_rating"
-    varchar status
+    varchar sku           "BRID-T005-205-55R16-91V"
+    varchar name          "205/55 R16 91V"
+    jsonb   attributes    "tire_size=205/55R16, load_index=91, speed_rating=V"
+    varchar status        "ACTIVE"
     int     sort_order
   }
 
   PRODUCT_TYPE_ADDON_LINKS {
     uuid    id PK
-    uuid    tenant_id
-    varchar product_type  "TIRE — covers every tire in the catalog"
-    uuid    addon_id FK   "→ ADDON_PRODUCT"
+    varchar product_type  "TIRE — one rule covers every tire article"
+    uuid    addon_id FK   "points to an ADDON_PRODUCT row"
     boolean is_mandatory  "true = auto-added, customer cannot remove"
-    boolean default_selected
-    int     sort_order
+    boolean default_selected "true = pre-ticked optional addon"
+    int     sort_order    "controls invoice / cart display order"
   }
 
   ADDON_PRODUCT {
     uuid    id PK
-    varchar sku           "e.g. SVC-TYRE-INSTALL, FEE-TYRE-RECYCLING"
-    varchar name          "e.g. Tyre Installation Package"
-    varchar brand         "same brand field as any other article"
+    varchar sku           "SVC-TYRE-INSTALL / FEE-TYRE-RECYCLING / …"
+    varchar name          "Tyre Installation Package / Tyre Recycling Fee / …"
+    varchar brand         "article field — same as any other product"
     varchar product_type  "LABOR or FEE"
-    numeric base_price    "no variants — SKU is the sellable unit"
+    numeric base_price    "45.00 / 4.25 / … — no variants needed"
     jsonb   attributes    "fee_type=regulatory for FEE articles"
   }
 
   PRODUCT_ADDON_LINKS {
     uuid    id PK
-    uuid    product_id FK "specific tire override"
-    uuid    addon_id FK   "LABOR or FEE being overridden"
+    uuid    product_id FK "specific tire that overrides the type default"
+    uuid    addon_id FK   "the LABOR or FEE article being overridden"
     boolean is_mandatory
     boolean default_selected
     int     sort_order
@@ -158,22 +159,22 @@ erDiagram
 
   STORE_PRODUCT_EXCLUSIONS {
     uuid    id PK
-    uuid    store_id      "→ tenant_svc.stores.id"
-    uuid    product_id FK "tire or addon excluded"
+    uuid    store_id      "tenant_svc.stores.id"
+    uuid    product_id FK "tire or addon article excluded at this store"
     uuid    variant_id FK "NULL = all variants excluded"
-    varchar reason
+    varchar reason        "e.g. Service not yet available at this location"
   }
 ```
 
-**How the package assembles at checkout:**
+### How the package assembles at checkout
 
-| Step | Source | Example |
+| Step | Table queried | Result for this example |
 |---|---|---|
-| 1 | Customer selects a tire variant | Bridgestone T005 205/55 R16 91V |
-| 2 | Load `product_type_addon_links` where `product_type = 'TIRE'` | Installation + Recycling Fee + Env Fee + Warranty |
-| 3 | Merge `product_addon_links` for this specific tire (if any rows exist) | e.g. run-flat skips installation |
-| 4 | Apply `store_product_exclusions` for the selected store | Lyon store: installation excluded |
-| 5 | Result = final add-on set rendered to cart | Mandatory ones auto-added; optional ones shown as upsell |
+| 1. Customer picks a size | `product_variants` | BRID-T005-205-55R16-91V |
+| 2. Load type-level addons | `product_type_addon_links` where `product_type = 'TIRE'` | SVC-TYRE-INSTALL (mandatory), FEE-TYRE-RECYCLING (mandatory), FEE-ENV-STATE (mandatory), SVC-WARRANTY-TYRE (optional) |
+| 3. Merge product overrides | `product_addon_links` for this tire (if any rows exist) | e.g. run-flat override: SVC-TYRE-INSTALL `is_mandatory = false` |
+| 4. Apply store exclusions | `store_product_exclusions` for selected store | Lyon: SVC-TYRE-INSTALL excluded → removed from cart |
+| 5. Render cart | — | Mandatory articles auto-added; optional shown as upsell |
 
 ---
 
