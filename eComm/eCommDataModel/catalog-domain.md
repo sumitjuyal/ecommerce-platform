@@ -6,10 +6,11 @@
 |---|---|
 | One catalog per tenant | `catalogs.tenant_id` unique |
 | Categories form a tree | `categories.parent_id` self-reference — unlimited depth |
-| Products have a type | `product_type` IN (`TIRE`, `PART`, `LABOR`, `FEE`, `BUNDLE`) |
-| Sellable items are variants | `product_variants` — one row per size/colour/spec combination |
+| Every item in the catalog is an article with a SKU | `products.sku` NOT NULL — TIRE, PART, LABOR, FEE, and BUNDLE are all articles |
+| `product_type` drives behaviour, not article status | Type controls: variants, pricing location, invoice rendering — not whether something is a real article |
+| Sellable tire/part items are variants | `product_variants` — one row per size/colour/spec combination |
 | Single-SKU product still has one variant | Keeps pricing and inventory anchored to `variant_id` consistently |
-| LABOR and FEE have no variants | Price on `products.base_price` — nothing to vary |
+| LABOR and FEE articles have no variants | Price on `products.base_price` — the SKU itself is the sellable unit |
 | Product-type add-ons apply to all products sharing the same type | `product_type_addon_links` — define once for `TIRE`, inherited by every tyre regardless of category |
 | Product-level add-ons override type defaults | `product_addon_links` — used only for exceptions, most products have no rows here |
 | FEE = regulatory charge only | Must appear as separate invoice line by law — recycling tax, env fee |
@@ -22,40 +23,42 @@
 
 ## Product Types Explained
 
+Every row in the `products` table is an **article** — it has its own `sku`, `name`, and `brand` regardless of type. `product_type` controls system behaviour only: whether variants exist, where the price lives, and how the article appears on the invoice.
+
 ### TIRE
-A physical tyre sold by SKU (e.g. Bridgestone Turanza T005, Bridgestone Blizzak WS90).
-- Has one or more **variants** (e.g. 205/55R16, 225/45R17)
+A physical tyre article (e.g. SKU `BRID-T005`, Bridgestone Turanza T005).
+- Has one or more **variants** (e.g. 205/55R16, 225/45R17) — the variant is the sellable SKU
 - Price is set at the variant level in `pricing_svc`
-- **Single-SKU tyre:** still creates one variant row — keeps pricing/inventory logic uniform
+- **Single-size tyre:** still creates one variant row — keeps pricing/inventory logic uniform
 - Automatically inherits add-ons (installation, fees, warranty) via `product_type_addon_links`
 
 ### PART
-A physical accessory or replacement part (e.g. TPMS Valve Kit, wheel bolt set).
-- Has variants when multiple sizes/specs exist
+A physical accessory or replacement part article (e.g. SKU `PART-TPMS-VALVE`, TPMS Valve Kit).
+- Has variants when multiple sizes/specs exist; single-spec parts have one variant row
 - Price at the variant level in `pricing_svc`
 - Can be linked as a mandatory or optional add-on to a TIRE via `product_addon_links`
 
 ### LABOR
-A labour or service item — no physical inventory (e.g. tyre installation, protection warranty).
-- **No variants** — nothing to vary
+A labour or service article — has its own SKU and is invoiced as a line item (e.g. SKU `SVC-TYRE-INSTALL`, Tyre Installation Package).
+- **No variants** — the SKU itself is the sellable unit
 - Price on `products.base_price`
 - Linked as a mandatory or optional add-on via `product_type_addon_links`
 
 ### FEE
-A regulatory charge that must appear as a **separate line on the invoice** — required by law, customer cannot remove.
-- **No variants, no inventory**
+A regulatory charge article — has its own SKU and must appear as a **separate line on the invoice** by law (e.g. SKU `FEE-TYRE-RECYCLING`, Tyre Recycling Fee).
+- **No variants** — the SKU itself is the sellable unit
 - Price on `products.base_price`
-- Examples: Scrap Tyre Recycling Charge, State Environmental Fee
 - `attributes.fee_type` = `'regulatory'` — drives invoice rendering and tax treatment
+- Customer cannot remove a mandatory FEE from the cart
 
 ### BUNDLE
-A **fixed pre-packaged** offering sold as a single unit with one SKU and one bundle price.
+A fixed pre-packaged article sold as a single unit with one SKU and one bundle price.
 - Components are defined in `bundle_items` (future table — not yet implemented)
-- Example: Winter Pack = 4 winter tyres + fitting + storage at one fixed price
+- Example: SKU `BUN-WINTER-PACK` = 4 winter tyres + fitting + storage at one fixed price
 
 > **Bundle vs Add-on Links:**
-> If each component has a separate line on the invoice → use `product_addon_links`.
-> If the whole pack is one line item at one price → use `BUNDLE`.
+> If each component has a separate invoice line → use `product_addon_links`.
+> If the whole pack is one invoice line at one price → use `BUNDLE`.
 
 ---
 
@@ -92,7 +95,7 @@ Applies automatically to Bridgestone Turanza T005, Michelin Pilot Sport 4, Toyo 
 
 ## Tire Package — Table Diagram
 
-This diagram shows only the tables involved when a tire is sold as a package. `TIRE_PRODUCT` and `ADDON_PRODUCT` both map to the `products` table — separated here to show their distinct roles.
+This diagram shows only the tables involved when a tire is sold as a package. `TIRE_PRODUCT` and `ADDON_PRODUCT` both map to the same `products` table — every article (TIRE, LABOR, FEE) has its own SKU, name, and brand. They are separated here only to show their distinct roles in the package.
 
 ```mermaid
 erDiagram
@@ -136,11 +139,12 @@ erDiagram
 
   ADDON_PRODUCT {
     uuid    id PK
-    varchar sku
+    varchar sku           "e.g. SVC-TYRE-INSTALL, FEE-TYRE-RECYCLING"
     varchar name          "e.g. Tyre Installation Package"
+    varchar brand         "same brand field as any other article"
     varchar product_type  "LABOR or FEE"
-    numeric base_price    "fixed price — no variants"
-    jsonb   attributes    "fee_type=regulatory for FEE products"
+    numeric base_price    "no variants — SKU is the sellable unit"
+    jsonb   attributes    "fee_type=regulatory for FEE articles"
   }
 
   PRODUCT_ADDON_LINKS {
