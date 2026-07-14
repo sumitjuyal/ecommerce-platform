@@ -23,7 +23,7 @@
 ## Product Types Explained
 
 ### TIRE
-A physical tyre sold by SKU (e.g. Michelin Pilot Sport 4, Bridgestone Turanza).
+A physical tyre sold by SKU (e.g. Bridgestone Turanza T005, Bridgestone Blizzak WS90).
 - Has one or more **variants** (e.g. 205/55R16, 225/45R17)
 - Price is set at the variant level in `pricing_svc`
 - **Single-SKU tyre:** still creates one variant row — keeps pricing/inventory logic uniform
@@ -64,8 +64,8 @@ A **fixed pre-packaged** offering sold as a single unit with one SKU and one bun
 **What the customer sees (invoice):**
 
 ```
-Michelin PS4 205/55R16 91V    × 4   €823.96   ← PRODUCT + variant, price from pricing_svc
-Tyre Installation Package     × 4   €180.00   ← SERVICE  SVC-TYRE-INSTALL €45.00 each
+Bridgestone Turanza T005 205/55R16 91V  × 4   €823.96   ← TIRE + variant, price from pricing_svc
+Tyre Installation Package              × 4   €180.00   ← LABOR  SVC-TYRE-INSTALL €45.00 each
 Tyre Recycling Fee            × 4   € 17.00   ← FEE      regulatory, separate line by law
 State Environmental Fee       × 4   €  4.00   ← FEE      regulatory, separate line by law
 ──────────────────────────────────────────────
@@ -86,7 +86,7 @@ product_type = TIRE
   └── SVC-WARRANTY-TYRE   is_mandatory=false  sort=4  (optional upsell)
 ```
 
-Applies automatically to Michelin PS4, Toyo PROXES, Bridgestone T005 — every tyre, regardless of category.
+Applies automatically to Bridgestone Turanza T005, Michelin Pilot Sport 4, Toyo PROXES — every tyre, regardless of category.
 
 ---
 
@@ -96,10 +96,10 @@ Add-ons are defined at the **product type level** and inherited by every product
 
 ```
 product_type = TIRE  ← product_type_addon_links defined here once
-  ├── Michelin PS4     → inherits all add-ons automatically
-  ├── Toyo PROXES      → inherits all add-ons automatically
-  ├── Bridgestone T005 → inherits all add-ons automatically
-  └── Run-flat XYZ     → inherits type defaults + product_addon_links override (e.g. no installation)
+  ├── Bridgestone Turanza T005 → inherits all add-ons automatically
+  ├── Michelin Pilot Sport 4  → inherits all add-ons automatically
+  ├── Toyo PROXES             → inherits all add-ons automatically
+  └── Run-flat XYZ            → inherits type defaults + product_addon_links override (e.g. no installation)
 ```
 
 **Checkout resolution order:**

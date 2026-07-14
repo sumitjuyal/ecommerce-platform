@@ -544,18 +544,18 @@ INSERT INTO catalog_svc.categories (id, tenant_id, catalog_id, parent_id, code, 
     ('e2000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'TYRES_WINTER',   'Winter Tyres',     2),
     ('e2000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'TYRES_ALLSEASON', 'All-Season Tyres', 3);
 
--- TIRE: Michelin Pilot Sport 4 (Summer — passenger)
+-- TIRE: Bridgestone Turanza T005 (Summer — passenger)
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, brand, product_type, status, attributes) VALUES
     ('f1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e2000000-0000-0000-0000-000000000001', 'MICH-PS4', 'Michelin Pilot Sport 4', 'MICHELIN', 'TIRE', 'ACTIVE',
+     'e2000000-0000-0000-0000-000000000001', 'BRID-T005', 'Bridgestone Turanza T005', 'BRIDGESTONE', 'TIRE', 'ACTIVE',
      '{"season":"summer","vehicle_type":"passenger"}');
 
--- Variants for Michelin PS4
+-- Variants for Bridgestone Turanza T005
 INSERT INTO catalog_svc.product_variants (id, tenant_id, product_id, sku, name, attributes, sort_order) VALUES
     ('f2000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001',
-     'MICH-PS4-205-55R16-91V', '205/55 R16 91V', '{"tire_size":"205/55R16","load_index":"91","speed_rating":"V"}', 1),
+     'BRID-T005-205-55R16-91V', '205/55 R16 91V', '{"tire_size":"205/55R16","load_index":"91","speed_rating":"V"}', 1),
     ('f2000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001',
-     'MICH-PS4-225-45R17-94Y', '225/45 R17 94Y', '{"tire_size":"225/45R17","load_index":"94","speed_rating":"Y"}', 2);
+     'BRID-T005-225-45R17-94Y', '225/45 R17 94Y', '{"tire_size":"225/45R17","load_index":"94","speed_rating":"Y"}', 2);
 
 -- ── Add-on products: labor and fees inherited by all TIRE products ────────────
 
