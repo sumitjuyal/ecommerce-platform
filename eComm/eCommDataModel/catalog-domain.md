@@ -12,8 +12,6 @@
 | SERVICE and FEE have no variants | Price on `products.base_price` — nothing to vary |
 | Category-level add-ons apply to all products in that category | `category_addon_links` — define once, inherited by every product in the category |
 | Product-level add-ons override category defaults | `product_addon_links` — used only for exceptions, most products have no rows here |
-| Category add-ons link to packaged SERVICEs and regulatory FEEs only | Parts and operational costs are BOM components inside the SERVICE — invisible to customer |
-| SERVICE internal costs stored in `service_bom` | LABOR, PART (consumable), MATERIAL — used for margin analysis and stock deduction |
 | FEE = regulatory charge only | Must appear as separate invoice line by law — recycling tax, env fee |
 | Default = every product available at every store | No row in `store_product_exclusions` means available |
 | Exception-based assortment | `store_product_exclusions` — only the 5% exceptions are stored |
@@ -32,10 +30,10 @@ A physical item sold by SKU (e.g. Michelin Pilot Sport 4, TPMS Valve Kit).
 - Can be an add-on to another product (e.g. TPMS Valve Kit is a physical part mandatory with every tyre)
 
 ### SERVICE
-A labour or service item — no physical inventory (e.g. tyre fitting, wheel balance, warranty).
+A labour or service item — no physical inventory (e.g. tyre installation, protection warranty).
 - **No variants** — nothing to vary
-- Price sits on `products.base_price` or can be overridden in `pricing_svc`
-- Can be standalone or linked as a mandatory/optional add-on to a PRODUCT
+- Price on `products.base_price`
+- Linked as a mandatory or optional add-on to a PRODUCT via `category_addon_links`
 
 ### FEE
 A regulatory charge that must appear as a **separate line on the invoice** — required by law, customer cannot remove.
@@ -56,20 +54,6 @@ A **fixed pre-packaged** offering sold as a single unit with one SKU and one bun
 
 ---
 
-## Service BOM — Internal Cost Components
-
-A SERVICE has one customer-facing price. Internally, it is composed of LABOR, PART (consumable), and MATERIAL components stored in `service_bom`. These are **never visible to the customer** — they drive stock deduction and margin analysis.
-
-### `component_type` values
-
-| Type | Description | Stock effect |
-|---|---|---|
-| `LABOR` | Staff time — fitting, balancing, labor | None |
-| `PART` | Physical consumable used during job — TPMS valve, oil filter | Deducted from `inventory_svc` on job completion |
-| `MATERIAL` | Bulk consumable — oils, fluids, shop supplies | Deducted by qty × unit |
-
----
-
 ## Real-World Example — Tyre Package
 
 **What the customer sees (invoice):**
@@ -85,36 +69,6 @@ Taxes                              €   56.95
 Out the door                       €1,081.91
 
 Optional: Tyre Protection Warranty × 4  €39.96  ← SERVICE opt-in upsell
-```
-
-**What lives inside SVC-TYRE-INSTALL (service_bom — internal only):**
-
-```
-component_name               component_type  qty  unit_cost  total
-───────────────────────────  ──────────────  ───  ─────────  ──────
-Tyre fitting labor           LABOR           1    €12.00     €12.00
-Wheel balance labor          LABOR           1    €13.99     €13.99
-TPMS valve kit               PART            1    € 7.99     € 7.99  ← stock deducted
-TPMS valve kit labor         LABOR           1    € 3.31     € 3.31
-Shop supplies                MATERIAL        1    € 1.73     € 1.73
-─────────────────────────────────────────────────────────────────
-Internal cost                                     €38.02
-Selling price                                     €45.00
-Margin                                            € 6.98  (18.4%)
-```
-
-**What lives inside SVC-OIL-CHANGE (service_bom — internal only):**
-
-```
-component_name               component_type  qty  unit_cost  total
-───────────────────────────  ──────────────  ───  ─────────  ──────
-Engine oil 5W-30 5L          MATERIAL        1    €15.00     €15.00  ← stock deducted
-Oil filter                   PART            1    € 8.00     € 8.00  ← stock deducted
-Oil change labor             LABOR           1    €26.99     €26.99
-─────────────────────────────────────────────────────────────────
-Internal cost                                     €49.99
-Selling price                                     €49.99
-Margin                                            € 0.00  (passed through at cost)
 ```
 
 **How add-ons are linked (category_addon_links on TYRES category):**
@@ -172,7 +126,6 @@ erDiagram
   PRODUCT_VARIANTS  ||--o{ PRODUCT_ATTRIBUTES       : "described by"
   CATEGORIES        ||--o{ CATEGORY_ADDON_LINKS     : "default add-ons for category"
   PRODUCTS          ||--o{ CATEGORY_ADDON_LINKS     : "is default add-on (as addon)"
-  PRODUCTS          ||--o{ SERVICE_BOM              : "has internal BOM (SERVICE only)"
   PRODUCTS          ||--o{ PRODUCT_ADDON_LINKS      : "product-level override (as parent)"
   PRODUCTS          ||--o{ PRODUCT_ADDON_LINKS      : "is override add-on (as addon)"
   PRODUCTS          ||--o{ STORE_PRODUCT_EXCLUSIONS : "excluded from"
@@ -264,20 +217,6 @@ erDiagram
     uuid        addon_id FK           "SERVICE, PRODUCT (part), or FEE"
     boolean     is_mandatory          "overrides category-level value"
     boolean     default_selected
-    int         sort_order
-    timestamptz created_at
-    timestamptz updated_at
-  }
-
-  SERVICE_BOM {
-    uuid        id PK
-    uuid        tenant_id             "denormalised"
-    uuid        service_id FK         "must be SERVICE type"
-    varchar     component_name        "internal description"
-    varchar     component_sku         "links to inventory_svc if PART/MATERIAL"
-    varchar     component_type        "LABOR | PART | MATERIAL"
-    numeric     quantity
-    numeric     unit_cost             "internal cost — NOT shown to customer"
     int         sort_order
     timestamptz created_at
     timestamptz updated_at

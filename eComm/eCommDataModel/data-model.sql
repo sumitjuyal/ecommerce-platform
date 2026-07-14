@@ -434,47 +434,6 @@ CREATE INDEX prod_addon_links_product_id_idx            ON catalog_svc.product_a
 CREATE INDEX prod_addon_links_tenant_id_idx             ON catalog_svc.product_addon_links (tenant_id);
 
 
--- ── Service Bill of Materials (BOM) ──────────────────────────────────────────
--- Internal cost components of a SERVICE. NOT visible to the customer.
--- Used for margin analysis, stock consumption tracking, and purchasing.
---
--- Examples:
---   SERVICE: Tyre Installation Package
---     → labor (internal)        qty=1  unit_cost=12.00
---     → wheel balance (labor)   qty=1  unit_cost=13.99
---     → TPMS valve kit (part)   qty=1  unit_cost=7.99   ← consumable, triggers stock deduction
---     → TPMS labor              qty=1  unit_cost=3.31
---     → shop supplies           qty=1  unit_cost=1.73
---
---   SERVICE: Oil Change
---     → engine oil 5W-30 5L     qty=1  unit_cost=15.00  ← consumable
---     → oil filter              qty=1  unit_cost=8.00   ← consumable
---     → labor                   qty=1  unit_cost=26.99
---
--- component_type:
---   LABOR      → staff time, no stock deduction
---   PART       → physical consumable, deducted from inventory_svc on job completion
---   MATERIAL   → bulk consumable (oils, fluids), deducted by qty × unit
-CREATE TABLE catalog_svc.service_bom (
-    id              uuid            PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id       uuid            NOT NULL,
-    service_id      uuid            NOT NULL REFERENCES catalog_svc.products (id),  -- must be SERVICE type
-    component_name  varchar(255)    NOT NULL,           -- internal description
-    component_sku   varchar(100),                       -- links to inventory_svc if PART/MATERIAL
-    component_type  varchar(20)     NOT NULL
-                        CHECK (component_type IN ('LABOR','PART','MATERIAL')),
-    quantity        numeric(10,4)   NOT NULL DEFAULT 1,
-    unit_cost       numeric(12,4)   NOT NULL DEFAULT 0,
-    sort_order      integer         NOT NULL DEFAULT 0,
-    created_at      timestamptz     NOT NULL DEFAULT now(),
-    updated_at      timestamptz     NOT NULL DEFAULT now()
-);
-
-CREATE INDEX service_bom_service_id_idx ON catalog_svc.service_bom (service_id);
-CREATE INDEX service_bom_tenant_id_idx  ON catalog_svc.service_bom (tenant_id);
-CREATE INDEX service_bom_sku_idx        ON catalog_svc.service_bom (component_sku);
-
-
 -- ── Store Product Exclusions (exception-based assortment) ─────────────────────
 -- Default = every active product is available at every store.
 -- A row here means a store does NOT carry that product/variant.
@@ -596,17 +555,9 @@ INSERT INTO catalog_svc.product_variants (id, tenant_id, product_id, sku, name, 
     ('f2000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001',
      'MICH-PS4-225-45R17-94Y', '225/45 R17 94Y', '{"tire_size":"225/45R17","load_index":"94","speed_rating":"Y"}', 2);
 
--- Sample SERVICE — tyre fitting (no variants, priced on product)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
-    ('f1000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'SVC-FITTING', 'Montage pneu', 'SERVICE', 'ACTIVE', 12.00,
-     '{"duration_minutes":"30"}');
+-- ── Add-on products: services and fees linked to the TYRES category ─────────
 
--- ── Add-on products: services, parts, fees ────────────────────────────────────
-
--- ── Packaged services (what the customer sees and buys) ───────────────────────
-
--- SERVICE: Tyre Installation Package (one price, customer sees one line)
+-- SERVICE: Tyre Installation Package
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price) VALUES
     ('f1000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
      'e1000000-0000-0000-0000-000000000003', 'SVC-TYRE-INSTALL', 'Tyre Installation Package', 'SERVICE', 'ACTIVE', 45.00);
@@ -629,31 +580,6 @@ INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, n
      'e1000000-0000-0000-0000-000000000003', 'SVC-WARRANTY-TYRE', 'Tyre Protection Warranty (1 year)', 'SERVICE', 'ACTIVE', 9.99,
      '{"duration_months":"12","coverage":"puncture,damage"}');
 
--- SERVICE: Oil Change (customer sees one price — BOM covers oil + filter + labor internally)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price) VALUES
-    ('f1000000-0000-0000-0000-000000000007', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'SVC-OIL-CHANGE', 'Engine Oil Change', 'SERVICE', 'ACTIVE', 49.99);
-
--- ── BOM: Tyre Installation Package — internal cost breakdown ─────────────────
--- Customer sees: "Tyre Installation Package — €45.00"
--- Internally: labor + consumable parts + shop supplies
-INSERT INTO catalog_svc.service_bom (tenant_id, service_id, component_name, component_sku, component_type, quantity, unit_cost, sort_order) VALUES
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Tyre fitting labor',      null,              'LABOR',    1, 12.00, 1),
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Wheel balance labor',     null,              'LABOR',    1, 13.99, 2),
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'TPMS valve kit',          'PART-TPMS-VALVE', 'PART',     1,  7.99, 3),
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'TPMS valve kit labor',    null,              'LABOR',    1,  3.31, 4),
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Shop supplies',           null,              'MATERIAL', 1,  1.73, 5);
--- Internal cost: €38.02  |  Selling price: €45.00  |  Margin: €6.98 (18.4%)
-
--- ── BOM: Oil Change — internal cost breakdown ─────────────────────────────────
--- Customer sees: "Engine Oil Change — €49.99"
--- Internally: oil + filter consumables + labor
-INSERT INTO catalog_svc.service_bom (tenant_id, service_id, component_name, component_sku, component_type, quantity, unit_cost, sort_order) VALUES
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', 'Engine oil 5W-30 5L',    'OIL-5W30-5L',     'MATERIAL', 1, 15.00, 1),
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', 'Oil filter',             'PART-OIL-FILTER',  'PART',     1,  8.00, 2),
-    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', 'Oil change labor',        null,              'LABOR',    1, 26.99, 3);
--- Internal cost: €49.99  |  Selling price: €49.99  |  Margin: €0 (passed through at cost)
-
 -- ── Category add-on links — TYRES category ───────────────────────────────────
 -- Defined once → inherited by every tyre product (Michelin, Toyo, Bridgestone…)
 -- sort 1: Tyre installation package  → mandatory (customer always buys with install)
@@ -668,7 +594,7 @@ INSERT INTO catalog_svc.category_addon_links (tenant_id, category_id, addon_id, 
 
 -- No product_addon_links rows needed for Michelin PS4 — it inherits all from TYRES category.
 
--- Exclusion example: Lyon store does not offer tyre fitting (no trained staff yet)
+-- Exclusion example: Lyon store does not offer tyre installation (no trained staff yet)
 INSERT INTO catalog_svc.store_product_exclusions (tenant_id, store_id, product_id, variant_id, reason) VALUES
     ('a1000000-0000-0000-0000-000000000001', 'd1000000-0000-0000-0000-000000000003',
-     'f1000000-0000-0000-0000-000000000002', NULL, 'Service not yet available at this location');
+     'f1000000-0000-0000-0000-000000000003', NULL, 'Service not yet available at this location');
