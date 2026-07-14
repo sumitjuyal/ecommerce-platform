@@ -12,7 +12,8 @@
 --   tenant_svc     → tenants, tenant_settings, stores, store_addresses,
 --                    store_hours, store_holiday_hours, tenant_users, tenant_user_roles
 --   catalog_svc    → catalogs, categories, products, product_variants,
---                    product_attributes, store_product_exclusions
+--                    product_attributes, product_service_links,
+--                    store_product_exclusions
 --
 -- Planned services (separate schemas, same pool DB):
 --   pricing_svc    → price_books, price_book_entries                   (future)
@@ -372,6 +373,33 @@ CREATE INDEX prod_attrs_tenant_id_idx   ON catalog_svc.product_attributes (tenan
 CREATE INDEX prod_attrs_key_value_idx   ON catalog_svc.product_attributes (key, value);
 
 
+-- ── Product Service Links ─────────────────────────────────────────────────────
+-- Associates a PRODUCT with related SERVICEs.
+-- Use case: buying a tyre triggers mandatory fitting + optional warranty.
+-- This is NOT a bundle — each component is priced independently.
+--
+-- is_mandatory = true  → service is auto-added when the product is added to cart
+-- is_mandatory = false → service is presented to the customer as an opt-in upsell
+-- default_selected     → pre-ticked in the UI even when optional
+-- sort_order           → controls display order in the service selector UI
+CREATE TABLE catalog_svc.product_service_links (
+    id                  uuid            PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           uuid            NOT NULL,
+    product_id          uuid            NOT NULL REFERENCES catalog_svc.products (id),   -- the PRODUCT
+    service_id          uuid            NOT NULL REFERENCES catalog_svc.products (id),   -- must be SERVICE type
+    is_mandatory        boolean         NOT NULL DEFAULT false,
+    default_selected    boolean         NOT NULL DEFAULT false,  -- pre-tick optional services
+    sort_order          integer         NOT NULL DEFAULT 0,
+    created_at          timestamptz     NOT NULL DEFAULT now(),
+    updated_at          timestamptz     NOT NULL DEFAULT now(),
+    CONSTRAINT product_service_links_different_chk CHECK (product_id <> service_id)
+);
+
+CREATE UNIQUE INDEX prod_svc_links_product_service_uidx ON catalog_svc.product_service_links (product_id, service_id);
+CREATE INDEX prod_svc_links_product_id_idx              ON catalog_svc.product_service_links (product_id);
+CREATE INDEX prod_svc_links_tenant_id_idx               ON catalog_svc.product_service_links (tenant_id);
+
+
 -- ── Store Product Exclusions (exception-based assortment) ─────────────────────
 -- Default = every active product is available at every store.
 -- A row here means a store does NOT carry that product/variant.
@@ -498,6 +526,19 @@ INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, n
     ('f1000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
      'e1000000-0000-0000-0000-000000000003', 'SVC-FITTING', 'Montage pneu', 'SERVICE', 'ACTIVE', 12.00,
      '{"duration_minutes":"30"}');
+
+-- Protection warranty service (optional add-on)
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
+    ('f1000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
+     'e1000000-0000-0000-0000-000000000003', 'SVC-WARRANTY-TYRE', 'Garantie protection pneu (1 an)', 'SERVICE', 'ACTIVE', 9.99,
+     '{"duration_months":"12","coverage":"puncture,damage"}');
+
+-- Service links: buying any tyre (Michelin PS4) →
+--   mandatory: tyre fitting
+--   optional:  protection warranty (not pre-ticked)
+INSERT INTO catalog_svc.product_service_links (tenant_id, product_id, service_id, is_mandatory, default_selected, sort_order) VALUES
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000002', true,  false, 1),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', false, false, 2);
 
 -- Exclusion example: Lyon store does not offer tyre fitting (no trained staff yet)
 INSERT INTO catalog_svc.store_product_exclusions (tenant_id, store_id, product_id, variant_id, reason) VALUES
