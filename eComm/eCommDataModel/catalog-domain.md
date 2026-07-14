@@ -12,8 +12,9 @@
 | SERVICE and FEE have no variants | Price on `products.base_price` — nothing to vary |
 | Category-level add-ons apply to all products in that category | `category_addon_links` — define once, inherited by every product in the category |
 | Product-level add-ons override category defaults | `product_addon_links` — used only for exceptions, most products have no rows here |
-| Add-on can be SERVICE, PRODUCT (part), or FEE | Applies to both `category_addon_links` and `product_addon_links` |
-| FEE is a regulatory or operational charge | `fee_type` attribute: `regulatory` (recycling, env) or `operational` (shop supplies) |
+| Category add-ons link to packaged SERVICEs and regulatory FEEs only | Parts and operational costs are BOM components inside the SERVICE — invisible to customer |
+| SERVICE internal costs stored in `service_bom` | LABOR, PART (consumable), MATERIAL — used for margin analysis and stock deduction |
+| FEE = regulatory charge only | Must appear as separate invoice line by law — recycling tax, env fee |
 | Default = every product available at every store | No row in `store_product_exclusions` means available |
 | Exception-based assortment | `store_product_exclusions` — only the 5% exceptions are stored |
 | Exclusion can be product-wide or variant-level | `variant_id NULL` = whole product excluded; set = specific variant only |
@@ -37,11 +38,12 @@ A labour or service item — no physical inventory (e.g. tyre fitting, wheel bal
 - Can be standalone or linked as a mandatory/optional add-on to a PRODUCT
 
 ### FEE
-A regulatory or operational charge automatically applied — not a product, not labour.
+A regulatory charge that must appear as a **separate line on the invoice** — required by law, customer cannot remove.
 - **No variants, no inventory**
 - Price on `products.base_price`
-- Examples: Scrap Tyre Recycling Charge, State Environmental Fee, Shop Supplies
-- `attributes.fee_type` = `'regulatory'` or `'operational'` — useful for invoice rendering and tax treatment
+- Examples: Scrap Tyre Recycling Charge, State Environmental Fee
+- `attributes.fee_type` = `'regulatory'` — drives invoice rendering and tax treatment
+- **Operational costs** (shop supplies, valve kits) are NOT FEEs — they are BOM components inside the SERVICE price, invisible to the customer
 
 ### BUNDLE
 A **fixed pre-packaged** offering sold as a single unit with one SKU and one bundle price.
@@ -54,37 +56,78 @@ A **fixed pre-packaged** offering sold as a single unit with one SKU and one bun
 
 ---
 
-## Real-World Example — Tyre Package (Firestone model)
+## Service BOM — Internal Cost Components
 
-Based on a real tyre product page, here is how the full package maps to the data model:
+A SERVICE has one customer-facing price. Internally, it is composed of LABOR, PART (consumable), and MATERIAL components stored in `service_bom`. These are **never visible to the customer** — they drive stock deduction and margin analysis.
+
+### `component_type` values
+
+| Type | Description | Stock effect |
+|---|---|---|
+| `LABOR` | Staff time — fitting, balancing, labor | None |
+| `PART` | Physical consumable used during job — TPMS valve, oil filter | Deducted from `inventory_svc` on job completion |
+| `MATERIAL` | Bulk consumable — oils, fluids, shop supplies | Deducted by qty × unit |
+
+---
+
+## Real-World Example — Tyre Package
+
+**What the customer sees (invoice):**
 
 ```
-Toyo PROXES ST III 235/60R18 XL    → products (PRODUCT) + product_variants (235/60R18)
-                                      qty=4, $205.99 each
-                                      Price via pricing_svc
+Michelin PS4 205/55R16 91V    × 4   €823.96   ← PRODUCT + variant, price from pricing_svc
+Forfait montage pneu          × 4   €180.00   ← SERVICE  SVC-TYRE-INSTALL €45.00 each
+Taxe recyclage pneu           × 4   € 17.00   ← FEE      regulatory, separate line by law
+Taxe environnementale         × 4   €  4.00   ← FEE      regulatory, separate line by law
+──────────────────────────────────────────────
+Subtotal                           €1,024.96
+Taxes                              €   56.95
+Out the door                       €1,081.91
 
-Installation Fees breakdown:
-  Computerized Wheel Balance        → products (SERVICE)  SVC-WHEEL-BALANCE   $13.99  mandatory
-  TPMS Valve Service Kit            → products (PRODUCT)  PART-TPMS-VALVE-KIT  $7.99  mandatory
-  TPMS Valve Service Kit Labor      → products (SERVICE)  SVC-TPMS-LABOUR      $3.31  mandatory
-  Scrap Tire Recycling Charge       → products (FEE)      FEE-TYRE-RECYCLING   $4.25  mandatory, fee_type=regulatory
-  State Environmental Fee           → products (FEE)      FEE-ENV-STATE        $1.00  mandatory, fee_type=regulatory
-  Shop Supplies                     → products (FEE)      FEE-SHOP-SUPPLIES    $1.73  mandatory, fee_type=operational
-
-Optional upsell:
-  Protection Warranty (1 year)      → products (SERVICE)  SVC-WARRANTY-TYRE    $9.99  optional, not pre-ticked
+Optional: Garantie protection pneu × 4  €39.96  ← SERVICE opt-in upsell
 ```
 
-All linked via `product_addon_links` where `product_id` = the tyre and `addon_id` = each item above.
+**What lives inside SVC-TYRE-INSTALL (service_bom — internal only):**
 
-**Cart total for 4 tyres:**
 ```
-Tyres:    4 × $205.99 = $823.96
-Add-ons:  4 × ($13.99 + $7.99 + $3.31 + $4.25 + $1.00 + $1.73) = $129.08
-Taxes:    $56.95
-──────────────────────────────
-Out the door: $1,009.99
+component_name               component_type  qty  unit_cost  total
+───────────────────────────  ──────────────  ───  ─────────  ──────
+Montage pneu (main d'oeuvre) LABOR           1    €12.00     €12.00
+Équilibrage roue             LABOR           1    €13.99     €13.99
+Kit valve TPMS               PART            1    € 7.99     € 7.99  ← stock deducted
+Pose kit valve TPMS          LABOR           1    € 3.31     € 3.31
+Fournitures atelier          MATERIAL        1    € 1.73     € 1.73
+─────────────────────────────────────────────────────────────────
+Internal cost                                     €38.02
+Selling price                                     €45.00
+Margin                                            € 6.98  (18.4%)
 ```
+
+**What lives inside SVC-OIL-CHANGE (service_bom — internal only):**
+
+```
+component_name               component_type  qty  unit_cost  total
+───────────────────────────  ──────────────  ───  ─────────  ──────
+Huile moteur 5W-30 5L        MATERIAL        1    €15.00     €15.00  ← stock deducted
+Filtre à huile               PART            1    € 8.00     € 8.00  ← stock deducted
+Main d'oeuvre vidange        LABOR           1    €26.99     €26.99
+─────────────────────────────────────────────────────────────────
+Internal cost                                     €49.99
+Selling price                                     €49.99
+Margin                                            € 0.00  (passed through at cost)
+```
+
+**How add-ons are linked (category_addon_links on TYRES category):**
+
+```
+TYRES category
+  └── SVC-TYRE-INSTALL    is_mandatory=true   sort=1  (every tyre sold includes install)
+  └── FEE-TYRE-RECYCLING  is_mandatory=true   sort=2  (law requires separate line)
+  └── FEE-ENV-STATE       is_mandatory=true   sort=3  (law requires separate line)
+  └── SVC-WARRANTY-TYRE   is_mandatory=false  sort=4  (optional upsell)
+```
+
+Applies automatically to Michelin PS4, Toyo PROXES, Bridgestone T005 — every tyre, no duplication.
 
 ---
 
@@ -129,6 +172,7 @@ erDiagram
   PRODUCT_VARIANTS  ||--o{ PRODUCT_ATTRIBUTES       : "described by"
   CATEGORIES        ||--o{ CATEGORY_ADDON_LINKS     : "default add-ons for category"
   PRODUCTS          ||--o{ CATEGORY_ADDON_LINKS     : "is default add-on (as addon)"
+  PRODUCTS          ||--o{ SERVICE_BOM              : "has internal BOM (SERVICE only)"
   PRODUCTS          ||--o{ PRODUCT_ADDON_LINKS      : "product-level override (as parent)"
   PRODUCTS          ||--o{ PRODUCT_ADDON_LINKS      : "is override add-on (as addon)"
   PRODUCTS          ||--o{ STORE_PRODUCT_EXCLUSIONS : "excluded from"
@@ -220,6 +264,20 @@ erDiagram
     uuid        addon_id FK           "SERVICE, PRODUCT (part), or FEE"
     boolean     is_mandatory          "overrides category-level value"
     boolean     default_selected
+    int         sort_order
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  SERVICE_BOM {
+    uuid        id PK
+    uuid        tenant_id             "denormalised"
+    uuid        service_id FK         "must be SERVICE type"
+    varchar     component_name        "internal description"
+    varchar     component_sku         "links to inventory_svc if PART/MATERIAL"
+    varchar     component_type        "LABOR | PART | MATERIAL"
+    numeric     quantity
+    numeric     unit_cost             "internal cost — NOT shown to customer"
     int         sort_order
     timestamptz created_at
     timestamptz updated_at

@@ -13,7 +13,8 @@
 --                    store_hours, store_holiday_hours, tenant_users, tenant_user_roles
 --   catalog_svc    → catalogs, categories, products, product_variants,
 --                    product_attributes, category_addon_links,
---                    product_addon_links (overrides only), store_product_exclusions
+--                    product_addon_links (overrides only), service_bom,
+--                    store_product_exclusions
 --
 -- Planned services (separate schemas, same pool DB):
 --   pricing_svc    → price_books, price_book_entries                   (future)
@@ -433,6 +434,47 @@ CREATE INDEX prod_addon_links_product_id_idx            ON catalog_svc.product_a
 CREATE INDEX prod_addon_links_tenant_id_idx             ON catalog_svc.product_addon_links (tenant_id);
 
 
+-- ── Service Bill of Materials (BOM) ──────────────────────────────────────────
+-- Internal cost components of a SERVICE. NOT visible to the customer.
+-- Used for margin analysis, stock consumption tracking, and purchasing.
+--
+-- Examples:
+--   SERVICE: Tyre Installation Package
+--     → labor (internal)        qty=1  unit_cost=12.00
+--     → wheel balance (labor)   qty=1  unit_cost=13.99
+--     → TPMS valve kit (part)   qty=1  unit_cost=7.99   ← consumable, triggers stock deduction
+--     → TPMS labor              qty=1  unit_cost=3.31
+--     → shop supplies           qty=1  unit_cost=1.73
+--
+--   SERVICE: Oil Change
+--     → engine oil 5W-30 5L     qty=1  unit_cost=15.00  ← consumable
+--     → oil filter              qty=1  unit_cost=8.00   ← consumable
+--     → labor                   qty=1  unit_cost=26.99
+--
+-- component_type:
+--   LABOR      → staff time, no stock deduction
+--   PART       → physical consumable, deducted from inventory_svc on job completion
+--   MATERIAL   → bulk consumable (oils, fluids), deducted by qty × unit
+CREATE TABLE catalog_svc.service_bom (
+    id              uuid            PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id       uuid            NOT NULL,
+    service_id      uuid            NOT NULL REFERENCES catalog_svc.products (id),  -- must be SERVICE type
+    component_name  varchar(255)    NOT NULL,           -- internal description
+    component_sku   varchar(100),                       -- links to inventory_svc if PART/MATERIAL
+    component_type  varchar(20)     NOT NULL
+                        CHECK (component_type IN ('LABOR','PART','MATERIAL')),
+    quantity        numeric(10,4)   NOT NULL DEFAULT 1,
+    unit_cost       numeric(12,4)   NOT NULL DEFAULT 0,
+    sort_order      integer         NOT NULL DEFAULT 0,
+    created_at      timestamptz     NOT NULL DEFAULT now(),
+    updated_at      timestamptz     NOT NULL DEFAULT now()
+);
+
+CREATE INDEX service_bom_service_id_idx ON catalog_svc.service_bom (service_id);
+CREATE INDEX service_bom_tenant_id_idx  ON catalog_svc.service_bom (tenant_id);
+CREATE INDEX service_bom_sku_idx        ON catalog_svc.service_bom (component_sku);
+
+
 -- ── Store Product Exclusions (exception-based assortment) ─────────────────────
 -- Default = every active product is available at every store.
 -- A row here means a store does NOT carry that product/variant.
@@ -562,64 +604,67 @@ INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, n
 
 -- ── Add-on products: services, parts, fees ────────────────────────────────────
 
--- SERVICE: Wheel balance (labour — mandatory with every tyre)
+-- ── Packaged services (what the customer sees and buys) ───────────────────────
+
+-- SERVICE: Tyre Installation Package (one price, customer sees one line)
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price) VALUES
     ('f1000000-0000-0000-0000-000000000003', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'SVC-WHEEL-BALANCE', 'Équilibrage roue', 'SERVICE', 'ACTIVE', 13.99);
+     'e1000000-0000-0000-0000-000000000003', 'SVC-TYRE-INSTALL', 'Forfait montage pneu', 'SERVICE', 'ACTIVE', 45.00);
 
--- PRODUCT: TPMS valve kit (physical part — mandatory with every tyre)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price) VALUES
-    ('f1000000-0000-0000-0000-000000000004', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000002', 'PART-TPMS-VALVE-KIT', 'Kit valve TPMS', 'PRODUCT', 'ACTIVE', 7.99);
-
--- SERVICE: TPMS valve kit labour (mandatory — goes with the kit above)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price) VALUES
-    ('f1000000-0000-0000-0000-000000000005', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'SVC-TPMS-LABOUR', 'Pose kit valve TPMS', 'SERVICE', 'ACTIVE', 3.31);
-
--- FEE: Scrap tyre recycling charge (regulatory — mandatory)
+-- FEE: Scrap tyre recycling (regulatory — mandatory, separate invoice line by law)
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
-    ('f1000000-0000-0000-0000-000000000006', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
+    ('f1000000-0000-0000-0000-000000000004', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
      'e1000000-0000-0000-0000-000000000003', 'FEE-TYRE-RECYCLING', 'Taxe recyclage pneu', 'FEE', 'ACTIVE', 4.25,
      '{"fee_type":"regulatory"}');
 
--- FEE: State environmental fee (regulatory — mandatory)
+-- FEE: State environmental fee (regulatory — mandatory, separate invoice line by law)
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
-    ('f1000000-0000-0000-0000-000000000007', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
+    ('f1000000-0000-0000-0000-000000000005', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
      'e1000000-0000-0000-0000-000000000003', 'FEE-ENV-STATE', 'Taxe environnementale', 'FEE', 'ACTIVE', 1.00,
      '{"fee_type":"regulatory"}');
 
--- FEE: Shop supplies (operational — mandatory)
-INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
-    ('f1000000-0000-0000-0000-000000000008', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
-     'e1000000-0000-0000-0000-000000000003', 'FEE-SHOP-SUPPLIES', 'Fournitures atelier', 'FEE', 'ACTIVE', 1.73,
-     '{"fee_type":"operational"}');
-
 -- SERVICE: Protection warranty (optional upsell)
 INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price, attributes) VALUES
-    ('f1000000-0000-0000-0000-000000000009', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
+    ('f1000000-0000-0000-0000-000000000006', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
      'e1000000-0000-0000-0000-000000000003', 'SVC-WARRANTY-TYRE', 'Garantie protection pneu (1 an)', 'SERVICE', 'ACTIVE', 9.99,
      '{"duration_months":"12","coverage":"puncture,damage"}');
 
--- ── Category add-on links — TYRES category (covers ALL tyres) ────────────────
--- Defined once on TYRES root category → inherited by every tyre product.
--- sort 1: Tyre fitting labour            → mandatory
--- sort 2: Wheel balance                  → mandatory
--- sort 3: TPMS Valve Kit (physical part) → mandatory
--- sort 4: TPMS Valve Kit Labour          → mandatory
--- sort 5: Scrap tyre recycling fee       → mandatory (regulatory)
--- sort 6: State environmental fee        → mandatory (regulatory)
--- sort 7: Shop supplies fee              → mandatory (operational)
--- sort 8: Protection warranty            → optional upsell
+-- SERVICE: Oil Change (customer sees one price — BOM covers oil + filter + labor internally)
+INSERT INTO catalog_svc.products (id, tenant_id, catalog_id, category_id, sku, name, product_type, status, base_price) VALUES
+    ('f1000000-0000-0000-0000-000000000007', 'a1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001',
+     'e1000000-0000-0000-0000-000000000003', 'SVC-OIL-CHANGE', 'Vidange huile moteur', 'SERVICE', 'ACTIVE', 49.99);
+
+-- ── BOM: Tyre Installation Package — internal cost breakdown ─────────────────
+-- Customer sees: "Forfait montage pneu — €45.00"
+-- Internally: labor + consumable parts + shop supplies
+INSERT INTO catalog_svc.service_bom (tenant_id, service_id, component_name, component_sku, component_type, quantity, unit_cost, sort_order) VALUES
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Montage pneu (main d''oeuvre)',    null,             'LABOR',    1, 12.00, 1),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Équilibrage roue',                null,             'LABOR',    1, 13.99, 2),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Kit valve TPMS',                  'PART-TPMS-VALVE', 'PART',     1,  7.99, 3),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Pose kit valve TPMS',             null,             'LABOR',    1,  3.31, 4),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Fournitures atelier',             null,             'MATERIAL', 1,  1.73, 5);
+-- Internal cost: €38.02  |  Selling price: €45.00  |  Margin: €6.98 (18.4%)
+
+-- ── BOM: Oil Change — internal cost breakdown ─────────────────────────────────
+-- Customer sees: "Vidange huile moteur — €49.99"
+-- Internally: oil + filter consumables + labor
+INSERT INTO catalog_svc.service_bom (tenant_id, service_id, component_name, component_sku, component_type, quantity, unit_cost, sort_order) VALUES
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', 'Huile moteur 5W-30 5L',           'OIL-5W30-5L',    'MATERIAL', 1, 15.00, 1),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', 'Filtre à huile',                  'PART-OIL-FILTER', 'PART',     1,  8.00, 2),
+    ('a1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', 'Main d''oeuvre vidange',           null,             'LABOR',    1, 26.99, 3);
+-- Internal cost: €49.99  |  Selling price: €49.99  |  Margin: €0 (passed through at cost)
+
+-- ── Category add-on links — TYRES category ───────────────────────────────────
+-- Defined once → inherited by every tyre product (Michelin, Toyo, Bridgestone…)
+-- sort 1: Tyre installation package  → mandatory (customer always buys with install)
+-- sort 2: Recycling fee              → mandatory (regulatory, separate invoice line)
+-- sort 3: Environmental fee          → mandatory (regulatory, separate invoice line)
+-- sort 4: Protection warranty        → optional upsell
 INSERT INTO catalog_svc.category_addon_links (tenant_id, category_id, addon_id, is_mandatory, default_selected, sort_order) VALUES
-    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000002', true,  false, 1),
-    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', true,  false, 2),
-    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000004', true,  false, 3),
-    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000005', true,  false, 4),
-    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000006', true,  false, 5),
-    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000007', true,  false, 6),
-    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000008', true,  false, 7),
-    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000009', false, false, 8);
+    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', true,  false, 1),
+    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000004', true,  false, 2),
+    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000005', true,  false, 3),
+    ('a1000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000006', false, false, 4);
 
 -- No product_addon_links rows needed for Michelin PS4 — it inherits all from TYRES category.
 
