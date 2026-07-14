@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Catalog & Pricing Domain — ER Diagram</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #f8fafc; color: #1e293b; margin: 0; padding: 32px; }
+    h1   { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+    p    { color: #64748b; font-size: 13px; margin-bottom: 24px; }
+    .diagram-box { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 32px; overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; margin-top: 32px; font-size: 13px; }
+    th    { background: #f1f5f9; text-align: left; padding: 8px 12px; font-weight: 600; border-bottom: 2px solid #e2e8f0; }
+    td    { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
+    .tag  { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .tenant   { background: #dbeafe; color: #1d4ed8; }
+    .catalog  { background: #dcfce7; color: #15803d; }
+    .pricing  { background: #fef9c3; color: #854d0e; }
+    .assort   { background: #ede9fe; color: #6d28d9; }
+    .inventory{ background: #fee2e2; color: #b91c1c; }
+  </style>
+</head>
+<body>
+
+<h1>Catalog &amp; Pricing Domain — ER Diagram</h1>
+<p>Multi-tenant · Multi-store · Shared price books · Opt-in assortment per store</p>
+
+<div class="diagram-box">
+  <div class="mermaid">
+erDiagram
+
+  TENANTS ||--|| CATALOGS             : "owns one catalog"
+  TENANTS ||--o{ STORES               : "has many stores"
+
+  CATALOGS          ||--o{ CATALOG_PRODUCTS   : "contains"
+  PRODUCTS          ||--o{ CATALOG_PRODUCTS   : "listed in"
+  PRODUCTS          ||--o{ PRODUCT_VARIANTS   : "has variants"
+  CATEGORIES        ||--o{ CATEGORY_PRODUCTS  : "groups"
+  PRODUCTS          ||--o{ CATEGORY_PRODUCTS  : "belongs to"
+  CATEGORIES        ||--o{ CATEGORIES         : "parent-child"
+
+  STORES            ||--o{ STORE_PRODUCTS     : "sells"
+  PRODUCTS          ||--o{ STORE_PRODUCTS     : "available at"
+  PRODUCT_VARIANTS  ||--o{ STORE_PRODUCTS     : "variant at store"
+
+  PRICE_BOOKS       ||--o{ PRICE_BOOK_ENTRIES : "contains"
+  PRODUCTS          ||--o{ PRICE_BOOK_ENTRIES : "priced in"
+  PRODUCT_VARIANTS  ||--o{ PRICE_BOOK_ENTRIES : "variant priced in"
+  STORES            }o--|| PRICE_BOOKS        : "uses price book"
+
+  STORES            ||--o{ INVENTORY          : "holds stock"
+  PRODUCT_VARIANTS  ||--o{ INVENTORY          : "tracked per variant"
+
+  TENANTS {
+    uuid        id PK
+    varchar     name
+    varchar     slug
+    varchar     locale
+    char        currency_code
+    uuid        catalog_id
+    uuid        default_price_book_id
+    varchar     status
+  }
+
+  STORES {
+    uuid        id PK
+    uuid        tenant_id FK
+    varchar     code
+    varchar     name
+    uuid        price_book_id FK
+    varchar     status
+  }
+
+  CATALOGS {
+    uuid        id PK
+    uuid        tenant_id FK
+    varchar     name
+    varchar     locale
+    char        currency_code
+    varchar     status
+  }
+
+  CATEGORIES {
+    uuid        id PK
+    uuid        catalog_id FK
+    uuid        parent_id FK
+    varchar     code
+    varchar     name
+    int         sort_order
+  }
+
+  PRODUCTS {
+    uuid        id PK
+    uuid        catalog_id FK
+    varchar     sku
+    varchar     name
+    varchar     brand
+    varchar     status
+    jsonb       attributes
+  }
+
+  PRODUCT_VARIANTS {
+    uuid        id PK
+    uuid        product_id FK
+    varchar     sku
+    varchar     name
+    jsonb       attributes
+    varchar     status
+  }
+
+  CATALOG_PRODUCTS {
+    uuid        catalog_id FK
+    uuid        product_id FK
+    boolean     is_published
+    timestamptz published_at
+  }
+
+  CATEGORY_PRODUCTS {
+    uuid        category_id FK
+    uuid        product_id FK
+    int         sort_order
+  }
+
+  STORE_PRODUCTS {
+    uuid        store_id FK
+    uuid        product_id FK
+    uuid        variant_id FK
+    boolean     is_available
+  }
+
+  PRICE_BOOKS {
+    uuid        id PK
+    uuid        tenant_id FK
+    varchar     code
+    varchar     name
+    char        currency_code
+    varchar     status
+    timestamptz valid_from
+    timestamptz valid_until
+  }
+
+  PRICE_BOOK_ENTRIES {
+    uuid        id PK
+    uuid        price_book_id FK
+    uuid        product_id FK
+    uuid        variant_id FK
+    numeric     price
+    numeric     compare_at_price
+  }
+
+  INVENTORY {
+    uuid        id PK
+    uuid        store_id FK
+    uuid        variant_id FK
+    int         qty_on_hand
+    int         qty_reserved
+    int         reorder_point
+  }
+  </div>
+</div>
+
+<h2 style="margin-top:40px;font-size:16px;font-weight:700;">Microservice Boundaries</h2>
+<table>
+  <thead>
+    <tr><th>Service</th><th>Tables</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="tag tenant">tenant_svc</span></td>
+      <td>tenants, stores</td>
+    </tr>
+    <tr>
+      <td><span class="tag catalog">catalog_svc</span></td>
+      <td>catalogs, categories, products, product_variants, catalog_products, category_products</td>
+    </tr>
+    <tr>
+      <td><span class="tag pricing">pricing_svc</span></td>
+      <td>price_books, price_book_entries</td>
+    </tr>
+    <tr>
+      <td><span class="tag assort">assortment_svc</span></td>
+      <td>store_products</td>
+    </tr>
+    <tr>
+      <td><span class="tag inventory">inventory_svc</span></td>
+      <td>inventory</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 style="margin-top:32px;font-size:16px;font-weight:700;">Key Rules</h2>
+<table>
+  <thead><tr><th>Rule</th><th>How</th></tr></thead>
+  <tbody>
+    <tr><td>One tenant → one catalog</td><td>UNIQUE (tenant_id) on catalogs</td></tr>
+    <tr><td>One tenant → one language</td><td>tenants.locale mirrors to catalogs.locale</td></tr>
+    <tr><td>One price book per store</td><td>stores.price_book_id NOT NULL</td></tr>
+    <tr><td>Multiple stores share a price book</td><td>Many stores → same price_book_id FK</td></tr>
+    <tr><td>Not all stores sell all products</td><td>store_products opt-in assortment table</td></tr>
+    <tr><td>Price tracked at variant level</td><td>price_book_entries.variant_id (NULL = base fallback)</td></tr>
+    <tr><td>No cross-service DB foreign keys</td><td>Logical refs only — enforced by application events</td></tr>
+  </tbody>
+</table>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'default', er: { diagramPadding: 20, layoutDirection: 'TB', minEntityWidth: 100, minEntityHeight: 75 } });
+</script>
+</body>
+</html>
